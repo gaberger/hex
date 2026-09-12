@@ -127,6 +127,53 @@ fn hexs_own_claude_md_names_only_real_verbs() {
     assert_all_verbs_real("CLAUDE.md", md);
 }
 
+/// The README, which is the first thing anyone reads and the last thing anyone
+/// re-checks. A front page promising a verb that was deleted is the same rot as
+/// a stale spec, in the place it costs most.
+#[test]
+fn the_readme_names_only_real_verbs() {
+    let md = include_str!("../../README.md");
+    assert_all_verbs_real("README.md", md);
+}
+
+/// Every relative link on the front page must resolve. A README is judged by
+/// its first broken link.
+#[test]
+fn every_readme_link_resolves() {
+    let md = include_str!("../../README.md");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .to_path_buf();
+
+    let mut checked = 0usize;
+    let mut dead: Vec<String> = Vec::new();
+    let mut rest = md;
+    while let Some(open) = rest.find("](") {
+        let after = &rest[open + 2..];
+        let Some(close) = after.find(')') else { break };
+        let target = &after[..close];
+        rest = &after[close + 1..];
+
+        // Skip URLs, in-page anchors, and images already covered by the path.
+        if target.starts_with("http") || target.starts_with('#') || target.is_empty() {
+            continue;
+        }
+        // Strip any anchor suffix: docs/x.md#section -> docs/x.md
+        let path = target.split('#').next().unwrap_or(target);
+        if path.is_empty() {
+            continue;
+        }
+        checked += 1;
+        if !root.join(path).exists() {
+            dead.push(path.to_string());
+        }
+    }
+
+    assert!(checked > 5, "link extractor found only {checked} links — it is broken");
+    assert!(dead.is_empty(), "README has {} dead link(s):\n  {}", dead.len(), dead.join("\n  "));
+}
+
 /// The section must be wrapped in the markers `hex refresh` replaces. Without
 /// them a freshly initialised project can never receive an updated rule set:
 /// refresh finds no marker, finds no legacy heading, and correctly declines to

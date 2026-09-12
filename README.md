@@ -5,237 +5,286 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-edition%202021-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
-  <a href="docs/adrs/INDEX.md"><img src="https://img.shields.io/badge/ADRs-255-bc8cff?style=flat-square" alt="ADRs"></a>
-  <a href="#what-hex-can-do-today"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="Alpha"></a>
+  <a href="docs/adrs/INDEX.md"><img src="https://img.shields.io/badge/ADRs-264-bc8cff?style=flat-square" alt="ADRs"></a>
+  <img src="https://img.shields.io/badge/tests-973-3fb950?style=flat-square" alt="973 tests">
+  <img src="https://img.shields.io/badge/self--grade-A%2B%20100%2F100-3fb950?style=flat-square" alt="A+ 100/100">
+  <a href="#what-is-not-proven"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="Alpha"></a>
 </p>
 
 <p align="center">
   <strong>A solo software-engineering agent, in one binary.</strong><br>
-  An evidence-gated loop for bounded work — and a cooperative+adversarial harness
-  that designs and hardens whole systems. Local models first, with a
-  <code>claude -p</code> frontier path for the hard parts.<br>
+  It writes code, runs your test command, and commits only if that command exits 0.<br>
   No daemon. No database. Nothing to start.
 </p>
 
 <p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#the-receipts">Receipts</a> ·
   <a href="ARCHITECTURE.md">Architecture</a> ·
-  <a href="docs/adrs/INDEX.md">ADR ledger</a> ·
-  <a href="docs/benchmarks/">Benchmarks</a>
+  <a href="docs/adrs/INDEX.md">ADR ledger</a>
 </p>
 
 ---
 
-> **Status (2026-09, alpha).** hex has a real, measured execution model: an evidence-gated
-> agent loop for bounded work, and a [cooperative+adversarial harness](#the-agentic-harness)
-> that designs and hardens whole systems — exercised on three real systems built from
-> one-line specs. The full capability runs on frontier inference; strictly-local on
-> commodity hardware has a measured ceiling. Every claim here is checkable against the
-> source, the [ADR ledger](docs/adrs/INDEX.md), or `docs/benchmarks/`.
->
-> **2026-08-24 — the `solo` epoch.** [ADR-2608241500](docs/adrs/ADR-2608241500-collapse-to-solo-software-engineering-agent.md)
-> deleted the daemon, the SpacetimeDB coordination core, the dashboard, the second agent
-> binary and the retired SOP pipeline: ~261k lines to ~59k, three processes to one. What
-> made the loop good — context assembly and evidence gates — was never in any of it.
+## The whole idea
 
-## What hex is
-
-hex is a **solo software-engineering agent**. You give it a task, a file, and a command that
-must pass:
+A test command is the only thing that decides whether work is finished.
 
 ```bash
 hex do run "make add() return a + b, not a - b" \
   --file src/lib.rs --evidence "cargo test --test add"
 ```
 
-It reads the code, edits it, runs your command, and commits **only if the command exits 0**.
-That is the whole product.
+hex reads the code, edits it, runs `cargo test --test add`, and **commits only if it
+exits 0**. If it fails, the edit is reverted. A model that wanders commits nothing.
 
-It is built on **hexagonal architecture** (ports and adapters) and enforces those rules on the
-code it writes — `hex analyze` is the grader, and hex scores A+ against it. Hooks, skills and
-settings are instantiated into a target project; `examples/` holds sample targets.
+That is the product. Everything else is a bigger version of it.
 
-The current design is **one strong agent loop fed by tools, code-graph context, and memory** —
-*not* a simulated organization of many agents (that earlier `org-sim` epoch was
-[retired](#epochs); see [ARCHITECTURE.md](ARCHITECTURE.md)). The differentiator is the **quality of
-context** assembled for that single loop — code-graph relevance plus ranked lessons — and a
-structure that turns frontier models into a disciplined, gated, architecturally-aware pipeline.
+## Three verbs
 
-## The execution model
+| Verb | For |
+|---|---|
+| **`hex do`** | One bounded change, one file, one gate |
+| **`hex build`** | A whole system from a one-line description, built to a gate |
+| **`hex scaffold`** | A described project on a deterministic hexagonal floor, gated on the build **and** the architecture grade |
+| **`hex harden`** | Point it at working code; it hunts for bugs the tests missed |
 
-The canonical path is `hex do` → an evidence-gated **ReAct loop** (reason → act → observe →
-repeat) over a curated, guarded toolset (read/verify tools + a terminal `propose_edit`; no
-arbitrary shell). The whole loop lives in the **`hex-exec`** crate.
-
-```
-task + graph context + ranked lessons + windowed file
-  → reason → read/verify tools → propose_edit → run evidence command
-  → commit IFF it exits 0   (else revert; the gate is the sole authority on what commits)
+```bash
+hex scaffold "A bookmark service: SQLite store, axum HTTP API, tag search" \
+  --target ./linkstore --lang rust --grade A
 ```
 
-What's actually wired (all shipped + validated — see the ADR ledger and the cited source):
+```
+✓ 8 files (rust) — gate: cargo test
+✓ floor gate green: cargo test
+✓ 2 designs → 2 critiques → spec 33505ch → build GREEN
+✓ gate re-run: PASS — 27 test(s) ran
+✓ architecture grade: A+ — score 100/100 (floor A)
+```
 
-- **The evidence gate is the only thing that authorizes a commit** — vacuous passes are detected and
-  rejected (`hex-exec/src/direct_exec.rs::evidence_is_vacuous`), failed edits reverted atomically. No
-  "it compiles" theater. (ADR-2026-05-19-0720, ADR-2026-06-04-1740.)
-- **Per-run worktree isolation** — autonomous runs execute in a dedicated `hex/auto/<id>` worktree off
-  the operator's branch under a distinct `hex-factory` identity, hard-guarded against the operator's
-  tree, merged back via `hex worktree merge` (`hex-exec/src/direct_workspace.rs`, ADR-2606071323).
-- **Evidence-gated best-of-N across complementary models** — `hex do` iterates an ordered candidate
-  list (`.hex/project.json → inference.react_models`, default `[devstral-small-2:24b, claude-code]`)
-  and commits the first to pass the gate. The gate, not a classifier, picks the winner — a mis-route
-  only costs latency (`react_execute_best_of_n`, ADR-2606072044).
-- **`claude -p` frontier fallback** — when local models fail, a `claude-code` candidate delegates the
-  whole task to the operator's logged-in Claude CLI (`claude_execute` in `direct_react.rs`): no API
-  key, no VRAM ceiling. Local runs free/fast; Claude recovers the hard ones.
-- **Benchmark-driven model choice** — `hex bench agentic` runs fixtures through the *real* loop in
-  isolated worktrees and scores per-model pass-rates (`docs/benchmarks/`, ADR-2606071734).
-- **Memory-aware resource governor** — `hex-exec/src/resource_governor.rs` gates admission by
-  available memory so best-of-N doesn't oversubscribe the box.
+## Why a gate instead of a spec
 
-## The agentic harness
+hex used to be specs-first: write behavioural specs, then code. That was measured and
+retired ([ADR-2026-09-11-1900](docs/adrs/ADR-2026-09-11-1900-gate-first-development.md)).
 
-The single loop above is for *bounded* work. For whole systems, hex has a **cooperative+adversarial
-harness** — multiple `claude -p` agents that disagree, attack each other's work, and resolve against
-a ground-truth gate (`hex-exec/src/adversarial.rs`). Two composable verbs:
+Of 110 specs in this repository, **44 described features that had been deleted months
+earlier and nothing ever failed.** Of the 17 that survived an audit, **one named a command
+you could run.** A document that cannot fail cannot be trusted, because nothing separates
+it from a document that is wrong.
 
-- **`hex build '<challenge>' --target <dir> --gate '<test>'`** — *cooperative design*: N agents
-  propose divergent designs (durability-first, concurrency-first, …) → each is red-teamed → a lead
-  synthesizes one spec → a build agent implements until the gate passes.
-- **`hex harden <path> --gate '<test>'`** — *adversarial hardening*: parallel reviewers hunt
-  bugs by failure-class lens → each finding is skeptically verified (default-refute) → confirmed bugs
-  are fixed under the gate.
-- `hex build … --harden` chains them into the full design → harden pipeline.
+So the pipeline is now:
 
-What keeps it disciplined: **a ground-truth test gate is the only authority**, the verifier defaults
-to *refuting* findings (so plausible-but-wrong bugs die before any edit), and every artifact is
-independently re-verified (`cargo test` / `tsc`) — not taken on the agents' word.
+```
+Decide (ADR) → Gate (the command that must exit 0, written first)
+            → Diverge (N designs, each red-teamed) → Build to the gate
+            → Harden (adversarial hunt, every fix gated) → Ship
+```
 
-**Exercised** — from one-line challenges, the harness built three real systems (now under `examples/`),
-and the adversarial pass found bugs the builds' *own passing tests* missed. The bug counts are recorded
-in [ADR-2606081916](docs/adrs/ADR-2606081916-hex-native-adversarial-review-harness.md):
+Three rules:
 
-| System (built from a one-line spec) | LOC | Adversarial review found |
-|---|---|---|
-| Concurrent durable job queue (WAL, crash-recovery) — `examples/jobqueue-clean` | ~2900 | **6 real bugs** (incl. silent WAL data-loss) |
-| Thread-safe LRU + TTL cache — `examples/lru-clean` | ~1300 | **1 real bug** (exception-safety) |
-| Token-bucket rate limiter — `examples/ratelimiter-clean` | ~550 | **0** (clean by design) |
+- **A spec that cannot be run does not exist.** It becomes a gate, or it becomes ADR prose
+  — history, which is allowed to be unexecutable because it never claims to describe the present.
+- **The gate is written before the code and is not derived from it.** A gate generated from
+  the implementation tests the implementation against itself.
+- **A vacuous gate is a failed gate.** A suite that exits 0 having run zero tests is not a pass.
 
-The 6 / 1 / 0 spread is the signature of a real tool — it finds bugs when they're there and reports
-none when they're not. hex supplies the structure that makes it work: the divergent-design pipeline,
-the skeptical-verify gate, the fix-loop, and the evidence anchor — orchestrating `claude -p` agents
-into a disciplined build-and-harden pipeline you can point at a one-line spec and get tested,
-architecturally-clean code back. (The counts come from those build sessions, recorded in the ADR
-above; the systems themselves are reproducible from their gates.)
+## The receipts
 
-## What hex can do today
+Six projects, three languages, each from one description, each gate re-run independently
+from a clean build:
 
-Concretely, with the receipts:
+| Project | Language | Tests | What it proves |
+|---|---|---:|---|
+| [`ratelimiter-proof`](examples/ratelimiter-proof) | Rust | 18 | `hex harden` found **3 real bugs** its own 14 passing tests missed |
+| [`game-life-rs`](examples/game-life-rs) | Rust | 36 | |
+| [`game-ttt-go`](examples/game-ttt-go) | Go | ✓ | Perfect minimax |
+| [`game-2048-ts`](examples/game-2048-ts) | TypeScript | 88 | Gate falsified 5 ways before being believed |
+| [`url-shortener-rs`](examples/url-shortener-rs) | Rust | 39 | A+ 100/100 |
+| [`linkstore-svc`](examples/linkstore-svc) | Rust | 27 | **Real I/O** — axum, SQLite, migration, 12 end-to-end tests |
 
-**What works:**
-- The hexagonal architecture is real and self-enforced — `hex analyze .` grades the workspace
-  **A+ / 100 / 0 boundary violations** (hex passes its own analyzer). The daemon it replaced
-  scored **F (30/100)** against this same analyzer before its crate split (ADR-2606071340).
-- The evidence-gated loop genuinely produces real, tested, committed code, and the gate holds
-  under failure (a wandering model commits *nothing*).
-- Best-of-N + the `claude -p` fallback let the loop recover across models automatically —
-  validated live (a local model failed a task; Claude took over and committed).
-- The **cooperative+adversarial harness** builds *and* hardens whole systems from one-line specs —
-  the three above, each gated by its own tests, with the adversarial pass catching real bugs the
-  build missed. hex even used it to find a bug in its *own* output.
+### The bug `hex harden` is proudest of
 
-**The honest envelope:**
-- **The full capability above runs on a frontier API or a logged-in `claude` CLI.** Strictly local
-  on commodity hardware has a ceiling (see the next section) — there, the local loop is a reliable
-  implementer of bounded work, and the frontier path takes the whole-system design and the hardest
-  tasks. hex routes between them by *measured fit*, not by guessing.
-- The benchmark corpus is small; treat any single number as directional, not gospel.
+The rate limiter's 14 tests all passed. The adversarial pass read a comment that said:
 
-## Local AI: the honest picture
+> `u128` cannot overflow on a product of two `u64` values, so this does the job of `checked_mul`.
+
+`Duration::as_nanos` returns a `u128`, not a `u64`. The product overflows, an `as` cast
+truncates it, and the result is a rate limiter that **silently limits nothing**.
+
+No spec would have caught that — a spec describes intent, and the intent here was correct.
+Only an adversary reading the code finds it.
+
+### Proving the tests aren't decoration
+
+A passing test proves nothing until it can fail. For `linkstore-svc`:
+
+| Sabotage | Result |
+|---|---|
+| HTTP `201` → `200` in the primary adapter | **4 tests failed** |
+| Domain stops stripping tracking parameters | **3 tests failed** |
+| Restored | **27 passed, 0 failed** |
+
+## Hexagonal architecture, enforced
+
+hex writes ports-and-adapters code and grades it. `hex analyze` is the grader, and **hex
+scores A+ / 100 / 0 violations against its own analyzer.** The daemon it replaced scored
+**F (30/100)**.
+
+The grade is a gate, not a report. `hex scaffold --grade A` fails the build if the result
+doesn't earn it — because a frontier model will happily hand you a working program whose
+use case imports a database driver, and the test suite will pass it.
+
+That gate earned its keep on `linkstore-svc`. With a live SQLite file and a live HTTP
+listener, the shortcut is a use case reaching for `rusqlite` or an axum type. It didn't:
+
+```
+src/usecases/  →  crate::domain, crate::ports, std::sync::Arc
+```
+
+No database, no HTTP, no runtime, in the layer that must not have them.
+
+## Lessons ship as rules, not as advice
+
+Every project `hex init` creates gets a `.hex/ADR-rules.toml` of rules that `hex analyze`
+runs. Each one cites the incident that produced it. An unenforced rule is prose with extra
+steps, so each has a test that plants a violation and proves it fires.
+
+Then hex was handed its own rule file, and they found four live defects in hex:
+
+- **The health score wrapped.** A `usize` penalty narrowed with `as u8`: 26 boundary
+  violations is a penalty of 260, which is `4` in a `u8`. The worst code in the repository
+  scored **96/100**, and the score *rose* as violations were added.
+- **`hex bootstrap` validated the wrong models** — it checked three model ids the project
+  did not configure, while `ready` ignored model checks entirely. An install with no models
+  at all reported ready.
+- **`hex bootstrap` hung on Linux** — it awaited a foreground server process that never exits.
+- **`hex analyze` printed a green tick for a check it had skipped** — "no rules file found"
+  and "✓ All ADR rules satisfied", on the same run.
+
+That last one is the lesson committed by the code that reports the lesson. It is the failure
+mode this project takes most seriously: **a gate that fails — or passes — for a reason
+unrelated to what it gates is indistinguishable from the truth.**
+
+## Local models: the honest picture
 
 hex is model-agnostic (Ollama, vLLM, OpenAI-compatible, Claude). But the *agentic loop* —
-multi-turn tool use, not single-shot codegen — is demanding, and we measured it:
+multi-turn tool use, not single-shot codegen — is demanding, and we measured it.
 
-- **It's a RAM problem, not just a VRAM one.** Top open models are large MoEs (e.g.
-  Qwen3-Coder-Next is ~51 GB of weights); on a 16 GB-GPU / 30 GB-RAM box they don't fit, even with
-  offload. The reachable set is ~≤13 GB-resident models.
-- **No single local model dominates.** A benchmark across the reachable models reordered the
-  "best" model on *every* fixture — devstral leads on string tasks, qwen on algorithmic ones, and
-  the top-of-the-leaderboard local model (`gpt-oss:20b`) scored *last* on our grid. **Leaderboard
-  scores do not predict agentic-loop performance.**
-- **The *language* matters as much as the model.** We ran the *same* CSV-parser task in Rust, TS,
-  and Go (react, per-model pass rate; data in `docs/benchmarks/fixtures/t25-csv-parse*.json`):
+**No single local model wins.** A benchmark across the reachable models reordered the best
+model on *every* fixture. The top-of-the-leaderboard local model (`gpt-oss:20b`) scored
+**last** on our grid. Leaderboard scores do not predict agentic-loop performance.
 
-  | Model | Rust | TS | Go |
-  |---|---|---|---|
-  | qwen2.5-coder:14b | 0/5 | **2/3** | 0/3 |
-  | gpt-oss:20b | 0/5 | **1/3** | 0/3 |
-  | devstral-small-2:24b | 5/5 | 3/3 | 2/3 |
-  | gemma3:12b | 4/5 | 2/3 | 1/3 |
+**The language matters as much as the model.** The same CSV-parser task, three languages,
+per-model pass rate:
 
-  The lesson isn't "static typing is hard" — it's that **TypeScript is uniquely *forgiving*, while
-  Rust *and* Go are strict and hard for weaker local models.** The two models that recover in TS
-  (qwen, gpt-oss) crash right back to 0/3 in Go — Go's strictness (unused imports/vars are compile
-  errors, byte-vs-rune) punishes them almost like Rust's borrow checker. So the local ceiling — and
-  how much the `claude -p` fallback is load-bearing — depends heavily on your language: lowest for
-  TS/JS, high for Rust and Go.
-- **So hex doesn't bet on one model.** It runs best-of-N across a complementary pair and falls
-  back to `claude -p` for tasks locals can't finish. That's the honest path to reliability on this
-  hardware — most so for Rust, less needed for TS.
+| Model | Rust | TS | Go |
+|---|---|---|---|
+| qwen2.5-coder:14b | 0/5 | **2/3** | 0/3 |
+| gpt-oss:20b | 0/5 | **1/3** | 0/3 |
+| devstral-small-2:24b | 5/5 | 3/3 | 2/3 |
+| gemma3:12b | 4/5 | 2/3 | 1/3 |
 
-If you have a frontier API or a logged-in `claude` CLI, hex is strong. If you're strictly local on
-commodity hardware, hex works but inherits the local models' ceiling — and the benchmark tells you
-exactly where that is.
+The lesson isn't "static typing is hard". **TypeScript is uniquely forgiving; Rust *and* Go
+are strict.** The two models that recover in TS crash back to 0/3 in Go, where unused
+imports are compile errors. So the local ceiling depends heavily on your language — lowest
+for TS, highest for Rust and Go.
+
+**So hex doesn't bet on one model.** It runs best-of-N across a complementary pair and falls
+back to `claude -p` — your logged-in Claude CLI, no API key, no VRAM ceiling — for tasks the
+local models can't finish. The gate, not a classifier, picks the winner, so a mis-route only
+costs latency.
+
+If you have a frontier API or a logged-in `claude`, hex is strong. If you're strictly local
+on commodity hardware, hex works and inherits the local models' ceiling — and
+`hex bench agentic` tells you exactly where that is.
+
+## What is not proven
+
+Two things, stated plainly because the rest of this page is a list of things that are.
+
+**Brownfield.** All six projects above are greenfield. hex has never been pointed at a large
+codebase someone else wrote and asked to change it safely. The evidence gate protects a
+change; nothing has tested whether hex can find the *right* change in code it did not write.
+
+**`hex analyze` is blind to third-party imports in `domain/`.** Rule 1, which hex writes into
+every project it scaffolds, says *"domain imports only domain"*. The analyzer checks
+layer-to-layer imports and does not check that — so a project can `use tokio` inside its
+domain and still score A+. hex's headline rule is stricter than what hex enforces. Recorded
+in [`docs/analysis/2609120100-real-io-proof.md`](docs/analysis/2609120100-real-io-proof.md),
+unfixed.
+
+**The code generation is `claude -p`.** hex's contribution is the deterministic floor, the
+evidence gate, the architecture grade and the adversarial pass — not the writing. "hex built
+a URL shortener" is more precisely "Claude built it and hex proved it was hexagonal and
+green." That is not a weakness, but it changes what the claim is.
 
 ## Architecture
 
-Full detail in **[ARCHITECTURE.md](ARCHITECTURE.md)** (the living map; always describes HEAD).
-Eight crates, one binary:
+Eight crates, one binary, ~53k lines. Full detail in
+**[ARCHITECTURE.md](ARCHITECTURE.md)** — the living map, always describing HEAD.
 
 | Crate | Role |
 |---|---|
-| **hex-core** | The contract surface: the inference port, message/tool/validation types. Zero runtime dependencies |
+| **hex-core** | The contract surface. Zero runtime dependencies |
 | **hex-infer** | Every inference adapter, the endpoint registry, tier resolution. The only place a provider or model may be named |
-| **hex-exec** | The agent engine: the ReAct loop, best-of-N, the `claude -p` delegate, the adversarial harness, the resource governor, guarded tools, the local store |
-| **hex-graph** | Code-knowledge-graph engine → `graph-out/graph.json` (`context_for`, `rank_lessons`) |
-| **hex-analysis** | Tree-sitter boundary checking + six health detectors; powers `hex analyze` |
-| **hex-git** / **hex-parser** | git plumbing (libgit2) · parsing utilities |
+| **hex-exec** | The agent loop, best-of-N, the `claude -p` delegate, the adversarial harness, guarded tools, the local store |
+| **hex-graph** | Code knowledge graph → `graph-out/graph.json` |
+| **hex-analysis** | Tree-sitter boundary checking + health detectors; powers `hex analyze` |
+| **hex-git** · **hex-parser** | git plumbing (libgit2) · parsing |
 | **hex-cli** | The binary, and the only composition root |
 
-All state is files: `~/.hex/*.jsonl` (memory, runs, spend),
-`~/.hex/inference-servers.json` (backends), `graph-out/graph.json` (the code graph),
-and `docs/` (ADRs, specs, workplans).
+All state is files: `~/.hex/*.jsonl`, `~/.hex/inference-servers.json`,
+`graph-out/graph.json`, `.hex/project.json`, `docs/`.
+
+**2026-08-24 — the `solo` epoch.**
+[ADR-2608241500](docs/adrs/ADR-2608241500-collapse-to-solo-software-engineering-agent.md)
+deleted the daemon, the SpacetimeDB coordination core, the dashboard, the second agent
+binary and the retired SOP pipeline: **~261k lines to ~53k, three processes to one.** What
+made the loop good — context assembly and evidence gates — was never in any of it.
 
 ## Quick start
 
 ```bash
-hex bootstrap          # prerequisites, Ollama (if present), config
-hex do run --file <f> --evidence "<cmd that must exit 0>" "<what to do>"
-hex bench agentic --filter <fixture>   # measure a model through the real loop
-hex build "<challenge>" --target <dir> --gate "<test>" --harden   # design + harden
-hex analyze .          # architecture grade + boundary violations
-hex graph consumers <path>             # trace before you delete
+cargo build -p hex-cli --release
+
+hex bootstrap                              # prerequisites, inference server, config
+hex init . --scaffold --lang rust          # deterministic hexagonal skeleton + rules
+
+hex do run "<task>" --file <f> --evidence "<cmd>"     # one gated change
+hex scaffold "<what to build>" --target <dir> --lang rust --grade A
+hex build "<challenge>" --target <dir> --gate "<cmd>" --harden
+hex harden <path> --gate "<cmd>"
+
+hex analyze .                              # architecture grade + violations
+hex graph consumers <path>                 # trace before you delete
+hex bench agentic                          # measure a model through the real loop
 ```
+
+`hex --help` lists all 26 verbs. `hex go` suggests the next action.
+`hex hey <intent>` routes natural language to a verb.
 
 ## Governance
 
-- **ADRs are an append-only ledger** — decisions are never edited or deleted; a changed decision
-  gets a new ADR that supersedes the old one. Lifecycle: `Proposed → Accepted → Completed`, or
-  `Rejected | Abandoned | Superseded | Deprecated`. Status changes only via `hex adr accept|complete|supersede`.
-- **Epochs** group ADRs by design era (`foundation` → `org-sim` *(retired)* → `single-agent` →
-  **`hybrid-inference`** *(current — ADR-2606072243)*). `hex adr reindex` regenerates the
-  [INDEX](docs/adrs/INDEX.md).
-- **[ARCHITECTURE.md](ARCHITECTURE.md) is the living map**; the ADR ledger is its history. If code or
-  older docs contradict the map, the map wins — and the contradiction is worth an ADR.
+- **ADRs are an append-only ledger.** Decisions are never edited or deleted; a changed
+  decision gets a new ADR that supersedes the old one. Status changes only via
+  `hex adr accept|complete|supersede`.
+- **Epochs** group ADRs by design era: `foundation` → `org-sim` *(retired)* →
+  `single-agent` → `hybrid-inference` → **`solo`** *(current)*.
+- **[ARCHITECTURE.md](ARCHITECTURE.md) is the living map**; the ledger is its history. If
+  code or older docs contradict the map, the map wins — and the contradiction is worth an ADR.
+- **`founding-goals.md` is the one file agents may not touch.** Editing it needs a human
+  commit under CODEOWNERS; retiring a goal needs a Retirement-ADR as well. That rule is the
+  only thing separating "the agent decided the goal was obsolete" from "a human did".
 
-## Influences & attestation
+## Influences
 
-The **`hex-graph`** code-knowledge engine is **graphify-influenced** — a GraphRAG-style code graph
-(typed nodes + edges, community detection, `EXTRACTED`/`INFERRED`/`AMBIGUOUS` confidence levels)
-reimplemented natively in Rust. The single-agent execution model (one gateway-mediated ReAct loop
-fed by code-graph context + memory, ADR-2606061359) converges with ideas from **OpenClaw** and
-**Hermes Agent** (Nous Research). These shaped the design; the implementation is hex's own.
+**`hex-graph`** is graphify-influenced — a GraphRAG-style code graph (typed nodes and edges,
+community detection, `EXTRACTED`/`INFERRED`/`AMBIGUOUS` confidence) reimplemented natively in
+Rust. The single-agent execution model converges with ideas from **OpenClaw** and **Hermes
+Agent** (Nous Research). These shaped the design; the implementation is hex's own.
 
 ---
 
-*Operational rules (how to drive hex day-to-day) live in [CLAUDE.md](CLAUDE.md). The architecture
-map is [ARCHITECTURE.md](ARCHITECTURE.md).*
+*Day-to-day operating rules live in [CLAUDE.md](CLAUDE.md). Every claim on this page is
+checkable against the source, the [ADR ledger](docs/adrs/INDEX.md), `docs/analysis/`, or
+`docs/benchmarks/`.*
