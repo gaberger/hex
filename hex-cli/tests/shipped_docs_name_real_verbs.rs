@@ -372,9 +372,30 @@ fn every_diagram_image_exists() {
         let _ = &mut rest;
     }
 
-    // Five diagrams, each with a light and a dark file.
-    assert!(seen >= 10, "found only {seen} diagram images; the extractor is broken");
+    // Four diagrams, each with a light and a dark file.
+    assert!(seen >= 8, "found only {seen} diagram images; the extractor is broken");
     assert!(missing.is_empty(), "missing diagram image(s):\n  {}", missing.join("\n  "));
+
+    // And the reverse: a file in the diagrams directory that no page references
+    // is dead weight that will drift from the text it once illustrated.
+    let dir = root.join(".github/assets/diagrams");
+    let referenced: std::collections::HashSet<String> = docs
+        .iter()
+        .flat_map(|(_, body)| {
+            body.match_indices(".github/assets/diagrams/")
+                .filter_map(|(i, _)| body[i..].split('"').next())
+                .map(|s| s.rsplit('/').next().unwrap_or(s).to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let mut orphans: Vec<String> = std::fs::read_dir(&dir)
+        .expect("diagrams dir")
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.ends_with(".svg") && !referenced.contains(n))
+        .collect();
+    orphans.sort();
+    assert!(orphans.is_empty(), "diagram file(s) no page references:\n  {}", orphans.join("\n  "));
 }
 
 /// Every reader-facing document under `docs/`, read at runtime.

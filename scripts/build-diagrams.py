@@ -14,28 +14,6 @@ from diagram_lib import Doc, box_h, GAP, ARROW, W
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".github", "assets", "diagrams")
 os.makedirs(OUT, exist_ok=True)
 
-def drift(d):
-    cx = W/2; y = 14
-    b1 = d.box(cx, y, ["agent writes code"], "step");            y1 = y + b1[3]
-    y = y1 + GAP
-    b2 = d.box(cx, y, ["tests pass?"], "check");                 y2 = y + b2[3]
-    d.arrow(cx, y1, cx, y - 6)
-    # the retry loop, drawn to the left
-    lx = cx - b2[2]/2 - 46
-    d.parts.append(f'<path d="M {cx - b2[2]/2:.0f} {y + b2[3]/2:.0f} H {lx} V {y1 - b1[3]/2:.0f} H {cx - b1[2]/2:.0f}" '
-                   f'stroke="{d.c(("#6e7781","","#8b949e",""))[0]}" stroke-width="2.5" fill="none" marker-end="url(#a)"/>')
-    d.parts.append(f'<text x="{lx - 8:.0f}" y="{(y + y1)/2:.0f}" text-anchor="end" font-size="21" '
-                   f'fill="{"#9198a1" if d.d else "#57606a"}" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">no</text>')
-    y = y2 + GAP
-    b3 = d.box(cx, y, ["ship it"], "step");                      y3 = y + b3[3]
-    d.arrow(cx, y2, cx, y - 6, "yes")
-    y = y3 + GAP
-    b4 = d.box(cx, y, ["shape drifts,", "nothing checks it"], "warn"); y4 = y + b4[3]
-    d.arrow(cx, y3, cx, y - 6)
-    y = y4 + GAP
-    d.box(cx, y, ["week 12:", "nothing is where", "it belongs"], "bad")
-    d.arrow(cx, y4, cx, y - 6)
-
 def pipeline(d):
     cx = W/2; y = 14
     steps = [
@@ -118,7 +96,7 @@ def crates(d):
     for i in range(len(ys) - 1):
         d.arrow(cx, ys[i][1], cx, ys[i+1][0] - 6)
 
-for name, fn in [("drift", drift), ("pipeline", pipeline), ("hexagon", hexagon),
+for name, fn in [("pipeline", pipeline), ("hexagon", hexagon),
                  ("loop", loop), ("crates", crates)]:
     for dark in (False, True):
         d = Doc(dark); fn(d)
