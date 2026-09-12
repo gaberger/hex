@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-edition%202021-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
   <a href="docs/adrs/INDEX.md"><img src="https://img.shields.io/badge/ADRs-264-bc8cff?style=flat-square" alt="ADRs"></a>
-  <img src="https://img.shields.io/badge/tests-977-3fb950?style=flat-square" alt="973 tests">
+  <img src="https://img.shields.io/badge/tests-977-3fb950?style=flat-square" alt="977 tests">
   <img src="https://img.shields.io/badge/self--grade-A%2B%20100%2F100-3fb950?style=flat-square" alt="A+ 100/100">
   <a href="#what-is-not-proven"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="Alpha"></a>
 </p>
@@ -40,7 +40,7 @@ exits 0**. If it fails, the edit is reverted. A model that wanders commits nothi
 
 That is the product. Everything else is a bigger version of it.
 
-## Three verbs
+## Four verbs
 
 | Verb | For |
 |---|---|
@@ -96,7 +96,7 @@ from a clean build:
 | Project | Language | Tests | What it proves |
 |---|---|---:|---|
 | [`ratelimiter-proof`](examples/ratelimiter-proof) | Rust | 18 | `hex harden` found **3 real bugs** its own 14 passing tests missed |
-| [`game-life-rs`](examples/game-life-rs) | Rust | 36 | |
+| [`game-life-rs`](examples/game-life-rs) | Rust | 36 | Conway, from one sentence |
 | [`game-ttt-go`](examples/game-ttt-go) | Go | ✓ | Perfect minimax |
 | [`game-2048-ts`](examples/game-2048-ts) | TypeScript | 88 | Gate falsified 5 ways before being believed |
 | [`url-shortener-rs`](examples/url-shortener-rs) | Rust | 39 | A+ 100/100 |
@@ -224,7 +224,7 @@ on commodity hardware, hex works and inherits the local models' ceiling — and
 
 ## What is not proven
 
-Two things, stated plainly because the rest of this page is a list of things that are.
+Stated plainly, because the rest of this page is a list of things that are.
 
 **Localisation.** hex can repair unfamiliar code — 10/10 on the brownfield trial — but only
 when you tell it which file. Given just a failing test name it found the right file **once in
