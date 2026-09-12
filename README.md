@@ -239,9 +239,11 @@ violations in a web client with no ports layer. hex was given the rule and the
 count, not the files. It found **17 of 17**, plus five more outside the target,
 added a typed ports layer with the domain types re-exported through it, changed
 no logic, edited no test, and kept all 177 tests green. It also wrote a
-boundary test of its own, unprompted. The grade reached C rather than A,
-because a health detector counted the new ports directory against it. That
-detector is a defect, and it is recorded in
+boundary test of its own, unprompted. The grade reached C rather than A. Four
+points came from a detector that looks for port interfaces imported by name and
+did not recognise the correct TypeScript pattern of importing the port's value.
+Eighteen came from dead exports elsewhere in the project that the refactor did
+not touch. The detector defect is recorded in
 [`docs/analysis/2609120500-refactoring-trial.md`](docs/analysis/2609120500-refactoring-trial.md).
 
 Every number above has a command that checks it in

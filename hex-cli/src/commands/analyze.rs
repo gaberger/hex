@@ -1596,6 +1596,18 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             if !deep.violations.is_empty() {
                 boundary_errors.push(serde_json::json!({"count": deep.violations.len()}));
             }
+            // The score's inputs, so a reader can see where the points went.
+            // Without this a score of 78 with zero violations was
+            // unexplainable from the output, and got misattributed.
+            result["score_components"] = serde_json::json!({
+                "violations": deep.violations.len(),
+                "circular_deps": deep.circular_deps.len(),
+                "dead_exports": deep.dead_exports.len(),
+                "unused_ports": deep.unused_ports.len(),
+            });
+            // And the items themselves, so a count can be checked.
+            result["unused_ports"] = serde_json::json!(deep.unused_ports);
+            result["dead_exports"] = serde_json::json!(deep.dead_exports);
         }
 
         // Compute local score if nexus didn't provide one

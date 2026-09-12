@@ -58,20 +58,44 @@ repository root, so the gate forced them. That is the gate working.
 
 ## Measure 4, read
 
-The grade is C at 78 with zero boundary violations. The 22 points come from
-one health detector, `dead layers`, which reports 10. At baseline it reported
-9. The refactor added a `ports/` directory, which is what the rules require,
-and the detector counted the new layer against it.
+The grade is C at 78 with zero boundary violations. The first version of this
+section attributed the 22 points to the dead-layers detector. That was an
+inference, written as a fact, and it was wrong. `--json` did not expose the
+score's components; it does now, and they are:
 
-A detector that penalises the fix the rules demand is a detector defect. It is
-recorded here, not fixed here.
+| Component | Baseline | After | Points |
+|---|---:|---:|---:|
+| violations | 17 | 0 | 0 |
+| dead exports | 21 | 18 | 18 |
+| unused ports | 0 | 4 | 4 |
+| circular deps | 0 | 0 | 0 |
+
+**The four unused ports are the four the refactor created.** `GraphInsightPort`,
+`LinkResolutionPort`, `NoteTreePort`, `EditorTextPort`. The detector looks for
+an adapter importing the interface by name. The components import the frozen
+value `graphInsightPort`, which is the correct TypeScript pattern, and the
+detector does not follow a value to its type. A correct fix was penalised four
+points by a name heuristic. That is the detector defect, and it is the one this
+section originally described against the wrong detector.
+
+**The 18 dead exports are in the outer app**, under `web/src/domain` and
+`web/src/usecases`, not in the client. They were 21 at baseline, masked by the
+170-point violation penalty. The refactor reduced them by three. They are
+pre-existing debt the grade now shows because nothing larger hides it.
+
+Without the false positive the score is 82, a B. Not A, because of debt outside
+the target. The task did not ask for that and the gate did not demand it.
+
+**The dead-layers count of 10 is unrelated to the score.** That detector reads
+only `.rs` files and parses with the Rust grammar. On a TypeScript tree it sees
+no inbound edges anywhere and flags every layer directory. It went from 9 to 10
+because one directory was added. It is displayed and it is meaningless on any
+project that is not Rust.
 
 The second half of this failure is mine. The gate given to `hex build` was
 `hex analyze . --exit-code`, which passes at zero violations. The measure I
 registered was grade A. The gate was weaker than the measure, so the harness
-reported GREEN at C. Had the gate been the grade, the build would have driven
-further or reported FAILED. A trial's gate must be its measure. This one was
-not.
+reported GREEN at C. A trial's gate must be its measure.
 
 ## The refactor itself
 
@@ -113,8 +137,11 @@ measure.
 
 ## Recorded, not fixed
 
-- The `dead layers` detector counts a new `ports/` directory against the
-  grade. It penalised the refactor the rules require.
+- The `unused_ports` detector matches port interfaces by name and does not
+  follow a value export to its type. It penalised the four correct TypeScript
+  ports the refactor created.
+- The `dead layers` detector is Rust-only. It flags every layer on a
+  TypeScript or Go project and its count is displayed as if it meant something.
 - The analyzer does not see `domain/` importing from a non-layer directory
   such as `api/`. Second sighting.
 - `hex build --gate` accepted a gate weaker than the trial's measure, and
