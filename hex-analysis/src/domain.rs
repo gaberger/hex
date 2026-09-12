@@ -95,6 +95,28 @@ pub struct ExportDeclaration {
     pub line: usize,
     /// Whether this export is annotated with `@hex:public`.
     pub hex_public: bool,
+    /// What kind of item this is. The dead-export finder reads it.
+    pub kind: ExportKind,
+}
+
+/// What kind of item an export is.
+///
+/// The dead-export finder treats a type differently from a value. A type its
+/// own file names again (the return type of a live function, the receiver of
+/// a method) is the file's API surface and is not dead. A value used only in
+/// its own file is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExportKind {
+    Function,
+    Type,
+    Value,
+    /// A Go method. It is consumed through a receiver and never imported by name.
+    Method,
+    /// A Rust `impl` block. Not an export. Recorded so `unused_ports` keeps
+    /// seeing adapter methods for structural matching.
+    Impl,
+    /// `export default`.
+    Default,
 }
 
 // ── Analysis Graph ───────────────────────────────────────

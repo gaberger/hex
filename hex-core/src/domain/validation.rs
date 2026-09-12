@@ -11,7 +11,7 @@ const CRITICAL_PATHS: &[&str] = &[
 /// matched against the trailing components of the candidate path so that
 /// e.g. "hex-nexus/src/sched.rs" matches whether passed absolute,
 /// repo-relative, or as bare basename.
-pub const CRITICAL_FILES: &[&str] = &[
+const CRITICAL_FILES: &[&str] = &[
     "sched.rs",
     "monitor.rs",
     "workplan_executor.rs",
@@ -32,7 +32,7 @@ pub const CRITICAL_FILES: &[&str] = &[
 /// then have its body re-seeded as the supervisor's authoritative prompt.
 /// Closing this prefix shuts the loop at the foundation, independent of
 /// any future improver code paths.
-pub const CRITICAL_PREFIXES: &[&str] = &[
+const CRITICAL_PREFIXES: &[&str] = &[
     "agents/hex/hex/",
 ];
 

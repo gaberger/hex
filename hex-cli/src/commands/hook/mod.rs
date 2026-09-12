@@ -100,16 +100,6 @@ impl SessionState {
         Ok(())
     }
 
-    fn set_worktree(&mut self, path: &str) {
-        self.worktree_path = Some(path.to_string());
-    }
-
-    fn add_allowed_path(&mut self, path: &str) {
-        if !self.allowed_paths.contains(&path.to_string()) {
-            self.allowed_paths.push(path.to_string());
-        }
-    }
-
     /// Returns true if the given path is permitted for this session.
     ///
     /// Fail-open: when `allowed_paths` is empty all paths are allowed.
@@ -339,10 +329,6 @@ fn minimal_fingerprint_block(project_dir: &Path, project_name: &str) -> String {
     minimal_fingerprint_block_inner(project_dir, project_name, false)
 }
 
-fn minimal_fingerprint_block_cached(project_dir: &Path, project_name: &str) -> String {
-    minimal_fingerprint_block_inner(project_dir, project_name, true)
-}
-
 fn minimal_fingerprint_block_inner(project_dir: &Path, project_name: &str, nexus_online: bool) -> String {
     let mut language = "unknown".to_string();
     let mut framework = "unknown".to_string();
@@ -534,196 +520,6 @@ async fn subagent_start() -> Result<()> {
     state.save()?;
 
     Ok(())
-}
-
-/// Step 3: create a git worktree for `branch` (if it doesn't already exist) and
-/// populate `state.allowed_paths` from the branch name's embedded layer segment.
-/// Fail-open — logs warnings but never panics or exits non-zero.
-fn ensure_worktree_exists(branch: &str, project_dir: &Path, state: &mut SessionState) {
-    // 1. Determine repo root
-    let repo_root = match std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(project_dir)
-        .output()
-    {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        }
-        _ => {
-            eprintln!("[hex hook] step3: could not determine repo root, skipping worktree creation");
-            // Still populate allowed_paths even without a worktree
-            for p in derive_allowed_paths(branch) {
-                state.add_allowed_path(&p);
-            }
-            return;
-        }
-    };
-
-    // 2. Check concurrent worktree cap (max 8; `git worktree list` always includes
-    //    the main worktree so threshold is 9 lines)
-    let worktree_count = std::process::Command::new("git")
-        .args(["worktree", "list"])
-        .current_dir(&repo_root)
-        .output()
-        .map(|out| String::from_utf8_lossy(&out.stdout).lines().count())
-        .unwrap_or(0);
-    if worktree_count >= 9 {
-        eprintln!(
-            "[hex hook] step3: max concurrent worktrees reached ({}/8), skipping creation for branch '{}'",
-            worktree_count - 1,
-            branch
-        );
-        for p in derive_allowed_paths(branch) {
-            state.add_allowed_path(&p);
-        }
-        return;
-    }
-
-    // 3. Check if the worktree already exists (porcelain output contains "branch refs/heads/<branch>")
-    let porcelain_out = std::process::Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(&repo_root)
-        .output();
-    let already_exists = if let Ok(out) = porcelain_out {
-        let text = String::from_utf8_lossy(&out.stdout).to_string();
-        text.lines().any(|line| line == format!("branch refs/heads/{}", branch))
-    } else {
-        false
-    };
-
-    if !already_exists {
-        // 4. Create the worktree: `git worktree add hex-worktrees-{branch} -b {branch}`
-        let worktree_dir = format!("hex-worktrees-{}", branch);
-        let add_out = std::process::Command::new("git")
-            .args(["worktree", "add", &worktree_dir, "-b", branch])
-            .current_dir(&repo_root)
-            .output();
-        match add_out {
-            Ok(out) if out.status.success() => {
-                eprintln!("[hex hook] step3: created worktree '{}' for branch '{}'", worktree_dir, branch);
-                // Update worktree_path to the absolute path
-                let abs_path = std::path::Path::new(&repo_root).join(&worktree_dir);
-                state.worktree_path = Some(abs_path.to_string_lossy().to_string());
-            }
-            Ok(out) => {
-                eprintln!(
-                    "[hex hook] step3: git worktree add failed: {}",
-                    String::from_utf8_lossy(&out.stderr).trim()
-                );
-            }
-            Err(e) => {
-                eprintln!("[hex hook] step3: could not run git worktree add: {}", e);
-            }
-        }
-    } else {
-        eprintln!("[hex hook] step3: worktree for branch '{}' already exists, skipping", branch);
-        // Still update worktree_path
-        let worktree_dir = format!("hex-worktrees-{}", branch);
-        let abs_path = std::path::Path::new(&repo_root).join(&worktree_dir);
-        state.worktree_path = Some(abs_path.to_string_lossy().to_string());
-    }
-
-    // 5. Populate allowed_paths from layer derived from branch name
-    for p in derive_allowed_paths(branch) {
-        state.add_allowed_path(&p);
-    }
-}
-
-/// Derive the set of allowed file paths for a worktree branch based on the
-/// layer/adapter encoded in the branch name.
-///
-/// Branch naming conventions:
-///   `feat-<feature>-domain`                  → domain layer
-///   `feat-<feature>-ports`                   → ports layer
-///   `feat-<feature>-secondary-<name>`        → secondary adapter
-///   `feat-<feature>-primary-<name>`          → primary adapter
-///   `feat-<feature>-usecases`                → usecases layer
-///   anything else                            → no layer-specific paths (only universal)
-///
-/// Universal paths (always appended): `docs/`, `tests/`, `config/`, `.hex/`
-fn derive_allowed_paths(branch: &str) -> Vec<String> {
-    let mut paths: Vec<String> = Vec::new();
-
-    // Normalise: lower-case, replace underscores with hyphens
-    let b = branch.to_lowercase().replace('_', "-");
-
-    if b.ends_with("-domain") || b.contains("-domain-") {
-        paths.push("src/core/domain/".to_string());
-    } else if b.ends_with("-ports") || b.contains("-ports-") {
-        paths.push("src/core/ports/".to_string());
-    } else if b.ends_with("-usecases") || b.contains("-usecases-") {
-        paths.push("src/usecases/".to_string());
-    } else if let Some(idx) = b.find("-secondary-") {
-        let adapter_name = &b[idx + "-secondary-".len()..];
-        // Strip any trailing segments after the adapter name (e.g. worktree suffix)
-        let name = adapter_name.split('-').next().unwrap_or(adapter_name);
-        paths.push(format!("src/adapters/secondary/{}/", name));
-        // Secondary adapters may also touch Rust crates
-        paths.push("hex-nexus/src/".to_string());
-        paths.push("hex-agent/src/".to_string());
-        paths.push("hex-cli/src/".to_string());
-    } else if let Some(idx) = b.find("-primary-") {
-        let adapter_name = &b[idx + "-primary-".len()..];
-        let name = adapter_name.split('-').next().unwrap_or(adapter_name);
-        paths.push(format!("src/adapters/primary/{}/", name));
-    }
-
-    // Universal cross-cutting paths
-    for p in &["docs/", "tests/", "config/", ".hex/"] {
-        paths.push(p.to_string());
-    }
-
-    paths
-}
-
-/// Walk a workplan JSON for a step whose description contains `task_title`
-/// (case-insensitive substring). Returns the `worktree_branch` field if found.
-fn find_branch_in_workplan(wp: &serde_json::Value, task_title: &str) -> Option<(String, String)> {
-    let check_step = |step: &serde_json::Value| -> Option<(String, String)> {
-        let desc = step
-            .get("description")
-            .or_else(|| step.get("title"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_lowercase();
-        if !desc.is_empty() && (desc.contains(task_title) || task_title.contains(desc.as_str())) {
-            let branch = step.get("worktree_branch")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_default();
-            let step_id = step.get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if branch.is_empty() { None } else { Some((branch, step_id)) }
-        } else {
-            None
-        }
-    };
-
-    // Flat steps array
-    if let Some(steps) = wp.get("steps").and_then(|v| v.as_array()) {
-        for step in steps {
-            if let Some(b) = check_step(step) {
-                return Some(b);
-            }
-        }
-    }
-
-    // Phases with nested steps
-    if let Some(phases) = wp.get("phases").and_then(|v| v.as_array()) {
-        for phase in phases {
-            if let Some(steps) = phase.get("steps").and_then(|v| v.as_array()) {
-                for step in steps {
-                    if let Some(b) = check_step(step) {
-                        return Some(b);
-                    }
-                }
-            }
-        }
-    }
-
-    None
 }
 
 /// Extract a value after a PREFIX: marker (e.g. HEXFLO_WORKPLAN:wp-foo → "wp-foo").
@@ -1827,7 +1623,7 @@ fn score_prompt(s: &str) -> i32 {
 fn match_t3_score(s: &str) -> bool { score_prompt(s) >= 4 }
 fn match_t2_score(s: &str) -> bool { score_prompt(s) >= 1 }
 
-pub static WORK_INTENT_RULES: &[ClassifierRule] = &[
+static WORK_INTENT_RULES: &[ClassifierRule] = &[
     // P0 — Escape hatches
     ClassifierRule {
         label: "escape_hatch",
@@ -1875,7 +1671,7 @@ pub static WORK_INTENT_RULES: &[ClassifierRule] = &[
     },
 ];
 
-pub fn classify_work_intent(prompt: &str) -> Tier {
+fn classify_work_intent(prompt: &str) -> Tier {
     let lower = prompt.to_lowercase();
     let trimmed = lower.trim();
 
@@ -1884,54 +1680,6 @@ pub fn classify_work_intent(prompt: &str) -> Tier {
         .find(|r| (r.matches)(trimmed))
         .map(|r| r.tier)
         .unwrap_or(Tier::T1Todo)
-}
-
-/// Walk the PPID chain from this process to find the ancestor `claude` process PID.
-/// Returns None if no `claude` process is found (e.g., running outside Claude Code).
-fn find_ancestor_claude_pid() -> Option<u32> {
-    use std::process::Command;
-    let output = Command::new("ps")
-        .args(["-o", "pid=,ppid=,comm=", "-ax"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-
-    // Build pid → (ppid, comm) map
-    let mut proc_map: std::collections::HashMap<u32, (u32, String)> =
-        std::collections::HashMap::new();
-    for line in text.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 3 {
-            if let (Ok(pid), Ok(ppid)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
-                let comm = parts[2..].join(" ");
-                proc_map.insert(pid, (ppid, comm));
-            }
-        }
-    }
-
-    // Walk up from our PID looking for a process named "claude"
-    let mut cur = std::process::id();
-    for _ in 0..10 {
-        if cur <= 1 {
-            break;
-        }
-        if let Some((ppid, comm)) = proc_map.get(&cur) {
-            // Match "claude" binary (may appear as "claude" or full path ending in /claude)
-            let base = comm.rsplit('/').next().unwrap_or(comm);
-            if base == "claude" {
-                return Some(cur);
-            }
-            cur = *ppid;
-        } else {
-            break;
-        }
-    }
-
-    // Fallback: immediate parent (best effort)
-    Some(std::os::unix::process::parent_id())
 }
 
 // ── Observe (ADR-2026-04-01-2137) ─────────────────────────────────────────────────

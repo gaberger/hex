@@ -107,36 +107,6 @@ pub struct DirectRun {
     pub error: Option<String>,
 }
 
-/// Record a run from any in-nexus agent (not just the direct executor) into the
-/// shared feed served by GET /api/direct/runs. `detail` becomes the instruction
-/// line shown in the dashboard.
-pub fn record_agent_run(
-    agent: &str,
-    started_at: String,
-    detail: String,
-    ok: bool,
-    committed: Option<String>,
-    duration_ms: u64,
-    error: Option<String>,
-) {
-    let run = DirectRun {
-        id: RUN_ID.fetch_add(1, Ordering::Relaxed),
-        agent: agent.to_string(),
-        started_at,
-        instruction: detail.chars().take(240).collect(),
-        file: String::new(),
-        model: String::new(),
-        ok,
-        attempts: 1,
-        steps: 1,
-        evidence_passed: ok,
-        committed,
-        duration_ms,
-        error,
-    };
-    store_run(run);
-}
-
 /// Record a ReAct-loop run (multi-step tool-use, ADR-2606071XXX) into the shared
 /// feed — keeps the run-buffer internals private to this module.
 #[allow(clippy::too_many_arguments)]

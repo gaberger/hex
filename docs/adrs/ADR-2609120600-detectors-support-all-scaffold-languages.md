@@ -17,7 +17,7 @@ An audit of those detectors on 2026-09-12:
 | Detector | Feeds the score | Rust | Go | TypeScript |
 |---|---|---|---|---|
 | boundary analysis (tree-sitter) | yes | yes | yes | yes |
-| `dead_exports` | yes | yes | ? | reads TS exports; correctness unverified |
+| `dead_exports` | yes | **no**: every `.rs` file skipped | **no**: 7 false findings on a fresh scaffold | reads TS exports; correctness unverified |
 | `unused_ports` | yes | yes | structural | name-match only; missed the idiomatic value-export pattern |
 | `circular_deps` | yes | yes | mentioned | not mentioned |
 | `dead_layer` | display | yes | **no** | **no**: parses with the Rust grammar and skips every non-`.rs` file |
@@ -82,6 +82,50 @@ Falsifiable and blocking:
   `dead_layer` reports every layer.
 - The `brain` clone from the refactoring trial, re-analysed after step 1,
   reports 0 unused ports, not 4.
+
+## Record
+
+Each step is recorded here when it lands, with what was measured.
+
+**Step 1, `unused_ports` (2026-09-12, `d8522e02`).** TypeScript reported a
+port as unused when its consumer imported the port's value rather than its
+type name. Go marked every port in an imported package as used because the
+extractor recorded imports as `*`. Both fixed; the Go extractor now records
+`pkg.Name` uses. `dead_layer` parses only Rust and now says so in its output
+instead of reporting ten dead layers on a TypeScript project. Six fixtures in
+`hex-analysis/tests/unused_ports_per_language.rs`.
+
+**Step 2, `dead_exports` (2026-09-12).** The audit table above was wrong in
+two cells. Rust was not "yes": `should_skip_dead_export_check` returned true
+for every `.rs` file, so the detector never ran on Rust and hex graded itself
+with a detector that could not see it. Go was not "?": a fresh
+`hex init --scaffold --lang go` reported seven dead exports, every export in
+`domain`, `usecases` and the composition root. The finder keyed consumers by
+file path; a Go import resolves to a package directory, a file in the same
+package names an export with no import at all, and a method is reached
+through a receiver.
+
+The fix is one rule for all three languages. **An export is dead when no
+other file names it.** The tree-sitter adapter counts every identifier leaf
+per file (`AstPort::extract_references`); comments and strings are not
+identifiers. A type its own file names again (the return type of a live
+function, the receiver of a method) is that file's API surface and is not
+dead; a value named only in its own file still is. Test files count as
+consumers. Import-path matching stays as a fast path for TypeScript.
+
+Measured: the three fresh scaffolds report zero dead exports, Go down from
+seven. Seven fixtures in `hex-analysis/tests/dead_exports_per_language.rs`,
+the seventh being the refactoring trial's case of a type named only by a
+live signature. On hex's own tree, with Rust now inside the detector, 74
+public items were named by no other file. Every one was checked against a
+whole-word grep; the six the grep found were in comments and strings. The
+grade fell to B 80. The items were made private where their own file used
+them and deleted where nothing did, along with the private helpers only they
+called: about 2,000 lines, including five `hex-git` modules (`blame`,
+`correlation`, `diff`, `log`, `status`) and the `adr_compliance` module in
+`hex-analysis`, none of which any code called. After the cleanup hex grades
+A+ 100 over 277 scanned files with every score component at zero, and this
+time the number includes Rust.
 
 ## Consequences
 

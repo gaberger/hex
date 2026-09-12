@@ -47,6 +47,23 @@ pub trait AstPort: Send + Sync {
         source: &str,
         lang: Language,
     ) -> Result<Vec<ExportDeclaration>, AnalysisError>;
+
+    /// Count every identifier the file names, by name. Declarations count.
+    ///
+    /// The dead-export finder reads this. An export that no other file names
+    /// is dead, whatever the import syntax of the language: a Go file in the
+    /// same package names it bare, a Rust file names it through a path, a
+    /// TypeScript file names it in an import clause. One rule, three
+    /// languages.
+    fn extract_references(
+        &self,
+        path: &Path,
+        source: &str,
+        lang: Language,
+    ) -> Result<std::collections::HashMap<String, usize>, AnalysisError> {
+        let _ = (path, source, lang);
+        Ok(std::collections::HashMap::new())
+    }
 }
 
 // ── Architecture Analysis Port ───────────────────────────

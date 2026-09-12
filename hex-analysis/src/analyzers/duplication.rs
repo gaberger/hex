@@ -77,7 +77,7 @@ pub fn analyze(root: &Path) -> anyhow::Result<DuplicationReport> {
 /// Run the duplication detector with a caller-supplied threshold.
 /// Findings are sorted `(port, adapter_a, adapter_b)` for stable
 /// hypothesis IDs in the improver.
-pub fn analyze_with_threshold(
+fn analyze_with_threshold(
     root: &Path,
     threshold: f64,
 ) -> anyhow::Result<DuplicationReport> {

@@ -69,7 +69,7 @@ fn match_infrastructure(s: &str) -> bool {
     s.contains("/infrastructure/") || s.ends_with("/infrastructure")
 }
 
-pub static LAYER_RULES: &[LayerRule] = &[
+static LAYER_RULES: &[LayerRule] = &[
     LayerRule {
         label: "composition_root",
         layer: Layer::CompositionRoot,
@@ -138,7 +138,7 @@ pub struct Violation {
 /// Validate whether a source layer may import from a target layer.
 ///
 /// Returns `None` if allowed, `Some(rule_description)` if violated.
-pub fn check_import(source: Layer, target: Layer) -> Option<&'static str> {
+fn check_import(source: Layer, target: Layer) -> Option<&'static str> {
     match source {
         // Rule 1: domain/ must only import from domain/
         Layer::Domain => {

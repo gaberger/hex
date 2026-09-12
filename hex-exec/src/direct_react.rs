@@ -75,7 +75,7 @@ fn react_model_from_config() -> Option<String> {
 
 /// Run the ReAct loop end-to-end. Returns the result, the number of steps
 /// (tool calls) taken, and the model used, for the run feed.
-pub async fn react_execute(task: DirectTask) -> (DirectResult, u32, String) {
+async fn react_execute(task: DirectTask) -> (DirectResult, u32, String) {
     // ADR-2606071323: confine the run to its own worktree unless the operator
     // opted out (`isolate:false`). Never silently fall back to the operator tree.
     let isolate = direct_exec::want_isolation(&task);
@@ -779,7 +779,7 @@ pub(crate) fn is_claude_model(m: &str) -> bool {
 /// ReAct path. `claude -p` is itself an agent, so it slots in as a task delegate
 /// (no per-step tool protocol). Uses the operator's logged-in `claude` CLI — no
 /// API key, no VRAM ceiling. Mirrors `react_execute`'s workspace lifecycle.
-pub async fn claude_execute(task: DirectTask) -> (DirectResult, u32, String) {
+async fn claude_execute(task: DirectTask) -> (DirectResult, u32, String) {
     let isolate = direct_exec::want_isolation(&task);
     let slug = crate::direct_workspace::next_run_slug();
     let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate) {

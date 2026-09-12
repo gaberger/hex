@@ -97,7 +97,7 @@ fn match_fp16(s: &str) -> bool {
     s.contains("f16") || s.contains("fp16") || s.contains("f32") || s.contains("fp32")
 }
 
-pub static GGUF_RULES: &[GgufRule] = &[
+static GGUF_RULES: &[GgufRule] = &[
     GgufRule { label: "q2", level: QuantizationLevel::Q2, signals: &["q2_k", "q2"], matches: match_q2 },
     GgufRule { label: "q3", level: QuantizationLevel::Q3, signals: &["q3_k", "q3"], matches: match_q3 },
     GgufRule { label: "q4", level: QuantizationLevel::Q4, signals: &["q4_k", "q4_0", "q4_1", "q4"], matches: match_q4 },

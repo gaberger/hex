@@ -165,7 +165,7 @@ pub enum InferenceAction {
 
 /// LoRA adapter registry subcommands (ADR-2606161300 Phase 1).
 #[derive(Subcommand)]
-pub enum AdapterAction {
+enum AdapterAction {
     /// Register a trained LoRA adapter against a (base, tier, expert) tuple
     Register {
         /// Expert this adapter realizes (e.g. hex-boundaries)
@@ -210,7 +210,7 @@ pub enum AdapterAction {
 
 /// LoRA idiom-expert corpus subcommands (ADR-2606161300 Phase 0).
 #[derive(Subcommand)]
-pub enum CorpusAction {
+enum CorpusAction {
     /// Build an expert's corpus from hex's own ADRs/specs/exemplars
     Build {
         /// Expert name (e.g. hex-boundaries)
@@ -1532,17 +1532,6 @@ async fn setup_defaults() -> anyhow::Result<()> {
 }
 
 // ── hex inference watch ────────────────────────────────────────────────────
-
-/// InferenceTaskPush mirrors the server-side struct in hex-nexus/src/state.rs.
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
-struct InferenceTaskPush {
-    id: String,
-    workplan_id: String,
-    task_id: String,
-    phase: String,
-    prompt: String,
-    role: String,
-}
 
 // ── Bench command (ADR-2026-04-13-1238) ──────────────────────────────────────────
 

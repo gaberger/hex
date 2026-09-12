@@ -17,17 +17,13 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 /// `~/.hex`, or `$HEX_HOME`. Created on demand.
-pub fn hex_home() -> PathBuf {
+fn hex_home() -> PathBuf {
     std::env::var("HEX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
             PathBuf::from(home).join(".hex")
         })
-}
-
-fn feed_path(name: &str) -> PathBuf {
-    hex_home().join(name)
 }
 
 /// Append one record. Best-effort by design, and the reason is the same one the STDB persist had:
@@ -109,11 +105,6 @@ pub fn propose_action(kind: &str, payload: &str, source: &str) -> Result<u64, St
     Ok(id)
 }
 
-/// Open proposals, newest first.
-pub fn proposals(limit: usize) -> Vec<Value> {
-    read_tail(PROPOSALS, limit)
-}
-
 // ── the agent-run feed ────────────────────────────────────────────────────────
 
 const RUNS: &str = "agent-runs.jsonl";
@@ -134,24 +125,6 @@ pub fn recent_runs(limit: usize) -> Vec<Value> {
 // ── token spend ───────────────────────────────────────────────────────────────
 
 const SPEND: &str = "inference-log.jsonl";
-
-/// Record one inference call's token usage.
-pub fn record_spend(model: &str, input_tokens: u64, output_tokens: u64) {
-    let _ = append(
-        SPEND,
-        &serde_json::json!({
-            "model": model,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "ts": chrono::Utc::now().to_rfc3339(),
-        }),
-    );
-}
-
-/// Recent spend rows, newest first.
-pub fn recent_spend(limit: usize) -> Vec<Value> {
-    read_tail(SPEND, limit)
-}
 
 #[cfg(test)]
 mod tests {

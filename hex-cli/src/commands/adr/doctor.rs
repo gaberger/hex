@@ -107,7 +107,7 @@ const RULE_TABLE: &[(FindingKind, AutoFixTier, Severity)] = &[
 
 /// Look up the (tier, severity) for a given finding kind. Panics if the rule
 /// table is missing a row — that's a programmer bug, not a runtime condition.
-pub fn rule_for(kind: FindingKind) -> (AutoFixTier, Severity) {
+fn rule_for(kind: FindingKind) -> (AutoFixTier, Severity) {
     RULE_TABLE
         .iter()
         .find(|(k, _, _)| *k == kind)
@@ -163,7 +163,7 @@ pub fn scan(adrs: &[(PathBuf, String)], now: NaiveDate) -> Vec<Finding> {
 /// rewrote — cross-file detectors (DuplicateId, DanglingDependency)
 /// require the full corpus to evaluate, so running them in isolation
 /// would produce false positives.
-pub fn scan_single_file(path: &Path, content: &str, now: NaiveDate) -> Vec<Finding> {
+fn scan_single_file(path: &Path, content: &str, now: NaiveDate) -> Vec<Finding> {
     let mut findings = Vec::new();
     findings.extend(detect_unparseable_status(path, content));
     findings.extend(detect_id_format_mismatch(path, content));
@@ -774,7 +774,7 @@ impl ShadowPromoteConfig {
 /// Try to safely apply a Tier-A finding's auto-fix patch via shadow
 /// promotion. The default config rooted at the current git repo. See
 /// [`shadow_promote_with_config`] for the injectable variant.
-pub fn shadow_promote(finding: &Finding) -> anyhow::Result<Outcome> {
+fn shadow_promote(finding: &Finding) -> anyhow::Result<Outcome> {
     let cfg = ShadowPromoteConfig::live()?;
     shadow_promote_with_config(finding, &cfg)
 }
@@ -805,7 +805,7 @@ pub fn shadow_promote_with_config(
 /// the auto-fix branch, the worktree directory stays in place, and
 /// `main` is never touched. The returned [`Outcome::Applied`] still
 /// carries the branch + fix-commit sha so the caller can surface them.
-pub fn shadow_promote_with_policy(
+fn shadow_promote_with_policy(
     finding: &Finding,
     cfg: &ShadowPromoteConfig,
     policy: MergePolicy,
@@ -1010,7 +1010,7 @@ fn kind_slug(kind: FindingKind) -> &'static str {
 /// Refuses anything that isn't Tier B. `Outcome::Applied` carries the
 /// branch + commit sha — main is never modified, so the caller knows the
 /// branch ref must be inspected/merged manually.
-pub fn tier_b_draft_with_config(
+fn tier_b_draft_with_config(
     finding: &Finding,
     cfg: &ShadowPromoteConfig,
 ) -> anyhow::Result<Outcome> {

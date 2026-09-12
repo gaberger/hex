@@ -6,7 +6,7 @@
 //! ADR-034 Phase 3.
 
 use super::domain::{DependencyViolation, HexLayer, ImportEdge};
-use super::layer_classifier::{classify_layer, get_violation_rule};
+use super::layer_classifier::get_violation_rule;
 
 /// Find all hexagonal boundary violations in a set of import edges.
 ///
@@ -31,28 +31,10 @@ pub fn find_violations(edges: &[ImportEdge]) -> Vec<DependencyViolation> {
     violations
 }
 
-/// Classify layers on raw edge data (when layers haven't been pre-computed).
-pub fn classify_and_find_violations(
-    edges: &[(String, String, String, usize)], // (from_file, to_file, import_path, line)
-) -> Vec<DependencyViolation> {
-    let classified: Vec<ImportEdge> = edges
-        .iter()
-        .map(|(from, to, path, line)| ImportEdge {
-            from_file: from.clone(),
-            to_file: to.clone(),
-            from_layer: classify_layer(from),
-            to_layer: classify_layer(to),
-            import_path: path.clone(),
-            line: *line,
-        })
-        .collect();
-
-    find_violations(&classified)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layer_classifier::classify_layer;
 
     fn edge(from: &str, to: &str) -> ImportEdge {
         ImportEdge {

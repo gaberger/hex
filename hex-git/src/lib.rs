@@ -4,12 +4,7 @@
 //! (the git poller that pushes to SharedState/websocket, and the swarm-task
 //! timeline join) stay in hex-nexus and consume this crate.
 
-pub mod status;
-pub mod log;
-pub mod diff;
 pub mod worktree;
-pub mod blame;
-pub mod correlation;
 
 use std::path::{Path, PathBuf};
 

@@ -9,7 +9,7 @@ use colored::Colorize;
 use sha2::{Digest, Sha256};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const GITHUB_RELEASES_API: &str =
+const GITHUB_RELEASES_API: &str =
     "https://api.github.com/repos/gaberger/hex/releases/latest";
 const GITHUB_RELEASES_BASE: &str =
     "https://github.com/gaberger/hex/releases/download";

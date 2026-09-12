@@ -54,7 +54,7 @@ async fn available_vram_mb() -> u64 {
 }
 
 /// Parse ollama `/api/tags` JSON → the named model's on-disk size in MB. Pure; tested.
-pub fn parse_model_size_mb(tags_json: &str, model: &str) -> Option<u64> {
+fn parse_model_size_mb(tags_json: &str, model: &str) -> Option<u64> {
     let v: serde_json::Value = serde_json::from_str(tags_json).ok()?;
     for m in v.get("models")?.as_array()? {
         if m.get("name").and_then(|n| n.as_str()) == Some(model) {

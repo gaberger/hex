@@ -39,11 +39,11 @@ use walkdir::WalkDir;
 
 /// Default LOC ceiling — a `domain/` type whose declaration plus impls
 /// span more than this in one file is presumed a god class.
-pub const DEFAULT_LOC_THRESHOLD: usize = 300;
+const DEFAULT_LOC_THRESHOLD: usize = 300;
 
 /// Default public-method ceiling. Above this the type is interrogating
 /// far too many concerns and should be decomposed.
-pub const DEFAULT_PUBLIC_METHODS_THRESHOLD: usize = 10;
+const DEFAULT_PUBLIC_METHODS_THRESHOLD: usize = 10;
 
 /// One finding row in the analyzer's JSON envelope.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

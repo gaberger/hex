@@ -187,7 +187,6 @@ pub async fn run(args: InitArgs) -> Result<()> {
         }
     }
 
-
     println!();
     println!(
         "{} Project {} is now hex-aware",
@@ -667,32 +666,5 @@ fn extract_templates(target: &Path) -> std::io::Result<Vec<String>> {
         created.extend(Assets::extract_to(prefix, &claude.join(dir))?);
     }
     Ok(created)
-}
-
-/// Lightweight init — creates `.hex/project.json` and nothing else. Skips the
-/// interview, claude settings, and scaffolding, so every project has an id for
-/// traceability without a full `hex init`.
-pub async fn run_init_in(dir: &str, name: &str) -> Result<()> {
-    let target = PathBuf::from(dir);
-    fs::create_dir_all(&target)?;
-
-    let hex_dir = target.join(".hex");
-    if hex_dir.join("project.json").exists() {
-        // Already initialized — nothing to do
-        return Ok(());
-    }
-
-    let project_name = if name.is_empty() {
-        target
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "hex-project".to_string())
-    } else {
-        name.to_string()
-    };
-
-    create_project_json(&target, &project_name)?;
-
-    Ok(())
 }
 

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Classification of a workload for routing to the appropriate API endpoint.
@@ -37,14 +36,6 @@ impl ThinkingConfig {
             budget_tokens: budget,
         }
     }
-}
-
-/// Options for a single API request.
-#[derive(Debug, Clone, Default)]
-pub struct ApiRequestOptions {
-    pub enable_cache: bool,
-    pub thinking: ThinkingConfig,
-    pub workload: Option<WorkloadClass>,
 }
 
 /// Tracks cached vs uncached token consumption for cost analysis.
@@ -219,37 +210,6 @@ pub struct RateLimitHeaders {
     pub output_tpm_limit: Option<u64>,
     pub output_tpm_remaining: Option<u64>,
     pub retry_after_ms: Option<u64>,
-}
-
-/// Batch request status.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BatchStatus {
-    InProgress,
-    Ended,
-    Cancelled,
-    Expired,
-}
-
-/// A batch request submitted to a Batch API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BatchRequest {
-    pub batch_id: String,
-    pub request_count: u32,
-    pub status: BatchStatus,
-    pub custom_ids: Vec<String>,
-}
-
-/// Aggregated metrics for the token budget dashboard.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ApiMetricsSnapshot {
-    pub cache: CacheMetrics,
-    pub rate_limits: HashMap<String, f64>,
-    pub realtime_requests: u32,
-    pub batch_requests: u32,
-    pub total_input_tokens: u64,
-    pub total_output_tokens: u64,
-    pub total_cache_read_tokens: u64,
-    pub estimated_savings_pct: f64,
 }
 
 #[cfg(test)]

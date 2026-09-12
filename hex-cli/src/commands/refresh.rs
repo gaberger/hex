@@ -27,7 +27,7 @@ use clap::Args;
 use colored::Colorize;
 
 pub const START_MARKER: &str = "<!-- hex:claude-md:start -->";
-pub const END_MARKER: &str = "<!-- hex:claude-md:end -->";
+const END_MARKER: &str = "<!-- hex:claude-md:end -->";
 const LEGACY_HEADING: &str = "## hex Autonomous Behavior";
 
 /// The shipped section, wrapped in the markers that make a later `hex refresh`

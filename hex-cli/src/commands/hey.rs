@@ -649,10 +649,6 @@ async fn llm_classify(text: &str) -> anyhow::Result<Option<(String, String, Stri
     Ok(None)
 }
 
-async fn llm_translate_shell(action: &str) -> anyhow::Result<String> {
-    llm_translate_shell_for_host(action, None).await
-}
-
 async fn llm_translate_shell_for_host(action: &str, host: Option<&str>) -> anyhow::Result<String> {
     // Look up host context from .hex/hosts.toml
     let host_context = host.and_then(|h| read_host_context(h)).unwrap_or_default();

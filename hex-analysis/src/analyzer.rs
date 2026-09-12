@@ -213,6 +213,9 @@ impl ArchAnalyzer {
             let exports = self
                 .ast
                 .extract_exports(Path::new(rel_path), &source, lang)?;
+            let references = self
+                .ast
+                .extract_references(Path::new(rel_path), &source, lang)?;
 
             let from_file = normalize_path(rel_path);
 
@@ -245,6 +248,7 @@ impl ArchAnalyzer {
                     })
                     .collect(),
                 exports,
+                references,
             });
         }
 
@@ -271,6 +275,10 @@ impl ArchAnalyzer {
                 Ok(i) => i,
                 Err(_) => continue,
             };
+            let references = self
+                .ast
+                .extract_references(Path::new(rel_path), &source, lang)
+                .unwrap_or_default();
 
             let from_file = normalize_path(rel_path);
             test_data.push(FileData {
@@ -286,6 +294,7 @@ impl ArchAnalyzer {
                     })
                     .collect(),
                 exports: vec![],
+                references,
             });
         }
 
@@ -402,7 +411,9 @@ impl ArchAnalysisPort for ArchAnalyzer {
     ) -> Result<Vec<DeadExport>, AnalysisError> {
         let go_mod = detect_go_module_prefix(root_path).await;
         let (_, file_data) = self.collect_file_data(root_path, go_mod.as_deref()).await?;
-        Ok(dead_export_finder::find_dead_exports(&file_data, &[]))
+        // Test files consume; an export only a test names is alive.
+        let tests = self.collect_test_file_data(root_path, go_mod.as_deref()).await?;
+        Ok(dead_export_finder::find_dead_exports(&file_data, &tests))
     }
 
     async fn detect_circular_deps(

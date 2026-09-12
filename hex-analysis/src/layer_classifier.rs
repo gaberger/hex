@@ -133,7 +133,7 @@ pub fn classify_layer(file_path: &str) -> HexLayer {
 ///
 /// Same-layer imports are always allowed. Cross-layer imports follow
 /// the hexagonal dependency direction rules.
-pub fn is_allowed_import(from_layer: HexLayer, to_layer: HexLayer) -> bool {
+fn is_allowed_import(from_layer: HexLayer, to_layer: HexLayer) -> bool {
     if from_layer == to_layer {
         return true;
     }
@@ -215,27 +215,6 @@ pub fn get_violation_rule(from_layer: HexLayer, to_layer: HexLayer) -> Option<&'
 
         _ => "unexpected layer combination",
     })
-}
-
-/// Classify a special file that doesn't fit neatly into hex layers.
-///
-/// Returns `Some(role)` for composition roots, entry points, and build configs,
-/// or `None` for regular source files.
-pub fn classify_special_file(file_path: &str) -> Option<&'static str> {
-    let normalized = file_path.replace('\\', "/");
-    let basename = normalized.rsplit('/').next().unwrap_or(&normalized);
-
-    if basename == "lib.rs" || basename.starts_with("composition-root") {
-        return Some("composition-root");
-    }
-    if basename == "main.rs" || basename == "main.go" || basename == "main.ts" {
-        return Some("entry-point");
-    }
-    if basename == "build.rs" || basename == "Cargo.toml" {
-        return Some("build-config");
-    }
-
-    None
 }
 
 // ── Tests ────────────────────────────────────────────────

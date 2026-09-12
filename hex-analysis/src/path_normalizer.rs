@@ -123,14 +123,6 @@ pub fn normalize_path_in(file_path: &str, lang: Language) -> String {
     }
 }
 
-/// Return the two candidate file paths for a Rust module path.
-///
-/// Rust resolves `mod foo` as either `foo.rs` or `foo/mod.rs`.
-pub fn rust_module_candidates(base_path: &str) -> (String, String) {
-    let p = base_path.trim_end_matches('/');
-    (format!("{}.rs", p), format!("{}/mod.rs", p))
-}
-
 // ── Language-Specific Resolvers ──────────────────────────
 
 fn resolve_ts_import(from_file: &str, import_path: &str) -> String {
@@ -313,12 +305,6 @@ mod tests {
     }
 
     // Rust module candidates
-    #[test]
-    fn rust_module_candidate_pair() {
-        let (a, b) = rust_module_candidates("src/core/ports");
-        assert_eq!(a, "src/core/ports.rs");
-        assert_eq!(b, "src/core/ports/mod.rs");
-    }
 
     /// A Go package import resolves to a directory. Appending `.ts` to it
     /// produced `internal/ports.ts`, which the layer classifier then matched

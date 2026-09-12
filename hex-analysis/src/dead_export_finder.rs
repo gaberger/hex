@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::domain::{DeadExport, ExportDeclaration, HexLayer, ImportStatement};
+use super::domain::{DeadExport, ExportDeclaration, ExportKind, HexLayer, ImportStatement};
 use super::layer_classifier::classify_layer;
 use super::path_normalizer::normalize_path;
 
@@ -28,6 +28,9 @@ const ENTRY_POINT_SUFFIXES: &[&str] = &[
     "/cli.ts",
     "/main.ts",
     "/composition-root.ts",
+    "/composition-root.go",
+    "/composition-root.rs",
+    "/composition_root.rs",
     "/main.go",
     "/main.rs",
     "/lib.rs",
@@ -59,12 +62,12 @@ fn should_skip_dead_export_check(file_path: &str) -> bool {
         return true;
     }
 
-    // Rust crates use `pub use` re-export chains that the analyzer can't trace
-    // statically. Skip all .rs files — `cargo test` validates Rust usage.
-    if file_path.ends_with(".rs") {
-        return true;
-    }
-
+    // Rust is not skipped. It was, on the grounds that `pub use` chains are
+    // hard to trace by path. The finder no longer needs the path: an export
+    // is alive when any other file names it, and a Rust file names what it
+    // uses through a `use` item or a qualified path, both of which are
+    // identifiers in the tree. A grade promised in three languages and
+    // computed in two was the defect (ADR-2609120600).
     false
 }
 
@@ -73,6 +76,8 @@ pub struct FileData {
     pub path: String,
     pub imports: Vec<ImportStatement>,
     pub exports: Vec<ExportDeclaration>,
+    /// Every identifier the file names, counted. See `AstPort::extract_references`.
+    pub references: HashMap<String, usize>,
 }
 
 /// Find exports that no other file imports.
@@ -174,7 +179,22 @@ pub fn find_dead_exports(
         }
     }
 
-    // Step 4: Find dead exports considering direct + transitive usage
+    // Step 4: Build the name → files-that-name-it map over every file,
+    // consumers included. This is the rule that holds in all three
+    // languages. A Go file in the same package names an export bare and
+    // imports nothing. A Go caller names a method through a receiver. A Rust
+    // file names an item through `crate::domain::x::Name` or `x::Name()`
+    // after `use crate::domain::x`. A TypeScript file names it in the import
+    // clause. Import-path matching is kept above as a fast path and covers
+    // none of the first three.
+    let mut referenced_in: HashMap<&str, Vec<&str>> = HashMap::new();
+    for file in source_files.iter().chain(additional_consumers.iter()) {
+        for name in file.references.keys() {
+            referenced_in.entry(name.as_str()).or_default().push(file.path.as_str());
+        }
+    }
+
+    // Step 5: Find dead exports considering direct + transitive usage
     let entry_exports: HashSet<&str> = ENTRY_EXPORTS.iter().copied().collect();
     let mut dead = Vec::new();
 
@@ -203,6 +223,10 @@ pub fn find_dead_exports(
         }
 
         for exp in &file.exports {
+            // An `impl` block is not an export; the type it implements is.
+            if exp.kind == ExportKind::Impl {
+                continue;
+            }
             if exp.hex_public {
                 continue;
             }
@@ -211,8 +235,19 @@ pub fn find_dead_exports(
             }
             let is_directly_used = direct.is_some_and(|n| n.contains(&exp.name));
             let is_transitively_used = transitive.is_some_and(|n| n.contains(&exp.name));
+            let named_elsewhere = referenced_in
+                .get(exp.name.as_str())
+                .is_some_and(|files| files.iter().any(|f| normalize_path(f) != normalized));
+            // A type its own file names again is the file's API surface: the
+            // return type of a live function, the receiver of a method, the
+            // shape a caller gets by inference and never imports. Rust makes
+            // this explicit (a private type in a public signature is an
+            // error); TypeScript and Go leave it implicit. The finder treats
+            // all three the same. A value named only at home is still dead.
+            let named_at_home = exp.kind == ExportKind::Type
+                && file.references.get(&exp.name).copied().unwrap_or(0) >= 2;
 
-            if !is_directly_used && !is_transitively_used {
+            if !is_directly_used && !is_transitively_used && !named_elsewhere && !named_at_home {
                 dead.push(DeadExport {
                     file: normalized.clone(),
                     export_name: exp.name.clone(),
@@ -250,9 +285,77 @@ mod tests {
                     name: name.to_string(),
                     line: i + 1,
                     hex_public: false,
+                    kind: ExportKind::Function,
                 })
                 .collect(),
+            references: HashMap::new(),
         }
+    }
+
+    /// A file that exports nothing and imports nothing, but names things.
+    fn namer(path: &str, names: &[&str]) -> FileData {
+        let mut f = make_file(path, &[], &[]);
+        f.references = names.iter().map(|n| (n.to_string(), 1)).collect();
+        f
+    }
+
+    #[test]
+    fn a_go_file_in_the_same_package_names_an_export_bare_and_that_is_alive() {
+        let files = vec![
+            make_file("internal/domain/count.go", &["Zero"], &[]),
+            namer("internal/domain/other.go", &["Zero"]),
+        ];
+        assert!(find_dead_exports(&files, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_rust_pub_item_nobody_names_is_dead() {
+        // Rust used to be skipped outright. It is not.
+        let files = vec![make_file("src/domain/orphan.rs", &["orphaned"], &[])];
+        let dead = find_dead_exports(&files, &[]);
+        assert_eq!(dead.len(), 1);
+        assert_eq!(dead[0].export_name, "orphaned");
+    }
+
+    #[test]
+    fn a_rust_pub_item_named_by_another_file_is_alive() {
+        let files = vec![
+            make_file("src/domain/count.rs", &["Count"], &[]),
+            namer("src/usecases/increment.rs", &["Count", "crate", "domain"]),
+        ];
+        assert!(find_dead_exports(&files, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_type_its_own_file_names_again_is_alive_a_value_is_not() {
+        // export interface ItemDetail {..}; export function getItem(): ItemDetail
+        // Consumers import getItem and never name ItemDetail.
+        let mut item = make_file("src/domain/item.ts", &["ItemDetail", "getItem", "helper"], &[]);
+        item.exports[0].kind = ExportKind::Type;
+        item.references = [("ItemDetail", 2), ("getItem", 1), ("helper", 3)]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        let consumer = namer("src/usecases/show.ts", &["getItem"]);
+        let dead: Vec<String> = find_dead_exports(&[item, consumer], &[])
+            .into_iter()
+            .map(|d| d.export_name)
+            .collect();
+        assert_eq!(dead, vec!["helper".to_string()]);
+    }
+
+    #[test]
+    fn an_impl_block_is_not_an_export() {
+        let mut f = make_file("src/domain/count.rs", &["Count"], &[]);
+        f.exports[0].kind = ExportKind::Impl;
+        assert!(find_dead_exports(&[f], &[]).is_empty());
+    }
+
+    #[test]
+    fn a_test_file_counts_as_a_consumer() {
+        let files = vec![make_file("internal/domain/count.go", &["Zero"], &[])];
+        let tests = vec![namer("internal/domain/count_test.go", &["Zero"])];
+        assert!(find_dead_exports(&files, &tests).is_empty());
     }
 
     #[test]
@@ -314,7 +417,9 @@ mod tests {
                 name: "INTERNAL_CONST".to_string(),
                 line: 1,
                 hex_public: true,
+                kind: ExportKind::Value,
             }],
+            references: HashMap::new(),
         }];
         let dead = find_dead_exports(&files, &[]);
         assert!(dead.is_empty());
@@ -341,14 +446,6 @@ mod tests {
         assert!(dead.is_empty());
     }
 
-    #[test]
-    fn rust_files_are_skipped() {
-        let files = vec![
-            make_file("src/domain/types.rs", &["MyStruct"], &[]),
-        ];
-        let dead = find_dead_exports(&files, &[]);
-        assert!(dead.is_empty());
-    }
 
     // ── Per-name tracking tests ──────────────────────
 
@@ -377,8 +474,10 @@ mod tests {
                     name: name.to_string(),
                     line: i + 1,
                     hex_public: false,
+                    kind: ExportKind::Function,
                 })
                 .collect(),
+            references: HashMap::new(),
         }
     }
 

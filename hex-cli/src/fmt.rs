@@ -6,44 +6,10 @@
 //! Plus helpers: status_badge, score_badge, truncate, progress.
 
 use colored::Colorize;
-use tabled::builder::Builder;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
 
 // ── pretty_table — the ONE function ─────────────────────────────────────
-
-/// Render a table with rounded borders from headers + rows of strings.
-///
-/// ```ignore
-/// pretty_table(&["ID", "Status"], &[
-///     vec!["ADR-001", "accepted"],
-///     vec!["ADR-002", "proposed"],
-/// ]);
-/// ```
-pub fn pretty_table(headers: &[&str], rows: &[Vec<String>]) -> String {
-    if rows.is_empty() {
-        return "  (no results)".dimmed().to_string();
-    }
-    let mut builder = Builder::new();
-    builder.push_record(headers.iter().map(|h| h.to_string()));
-    for row in rows {
-        builder.push_record(row.clone());
-    }
-    builder.build().with(Style::rounded()).to_string()
-}
-
-/// Render a compact borderless table (for piping / minimal output).
-pub fn pretty_table_compact(headers: &[&str], rows: &[Vec<String>]) -> String {
-    if rows.is_empty() {
-        return String::new();
-    }
-    let mut builder = Builder::new();
-    builder.push_record(headers.iter().map(|h| h.to_string()));
-    for row in rows {
-        builder.push_record(row.clone());
-    }
-    builder.build().with(Style::blank()).to_string()
-}
 
 // ── HexTable — derive-based wrapper ─────────────────────────────────────
 
@@ -85,50 +51,7 @@ pub fn status_badge(status: &str) -> String {
     }
 }
 
-/// Colored score with grade letter.
-pub fn score_badge(score: u32) -> String {
-    let grade = match score {
-        90..=100 => "A",
-        80..=89 => "B",
-        70..=79 => "C",
-        60..=69 => "D",
-        _ => "F",
-    };
-    let text = format!("{} ({})", score, grade);
-    match score {
-        90..=100 => text.green().bold().to_string(),
-        80..=89 => text.green().to_string(),
-        70..=79 => text.yellow().to_string(),
-        _ => text.red().to_string(),
-    }
-}
-
-/// Boolean as colored checkmark or cross.
-pub fn bool_badge(val: bool) -> String {
-    if val {
-        "✓".green().bold().to_string()
-    } else {
-        "✗".red().bold().to_string()
-    }
-}
-
 // ── Text Helpers ────────────────────────────────────────────────────────
-
-/// Extract a human-readable title from a task title that may be raw JSON.
-/// `{"description":"Define domain models..."}` → `"Define domain models..."`
-pub fn extract_task_title(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.starts_with('{') {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            for key in &["description", "title", "name", "step"] {
-                if let Some(s) = v[key].as_str() {
-                    return s.to_string();
-                }
-            }
-        }
-    }
-    trimmed.to_string()
-}
 
 /// Truncate a string to `max_len` characters, appending "…" if truncated.
 pub fn truncate(s: &str, max_len: usize) -> String {
@@ -161,36 +84,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pretty_table_renders() {
-        let output = pretty_table(
-            &["ID", "Name", "Status"],
-            &[
-                vec!["1".into(), "foo".into(), "ok".into()],
-                vec!["2".into(), "bar".into(), "err".into()],
-            ],
-        );
-        assert!(output.contains("foo"));
-        assert!(output.contains("bar"));
-        assert!(output.contains("╭")); // rounded borders
-    }
-
-    #[test]
-    fn pretty_table_compact_no_borders() {
-        let output = pretty_table_compact(
-            &["ID", "Name"],
-            &[vec!["1".into(), "test".into()]],
-        );
-        assert!(output.contains("test"));
-        assert!(!output.contains("╭"));
-    }
-
-    #[test]
-    fn pretty_table_empty_shows_message() {
-        let output = pretty_table(&["ID"], &[]);
-        assert!(output.contains("no results"));
-    }
-
-    #[test]
     fn truncate_works() {
         assert_eq!(truncate("hello world", 5), "hell…");
         assert_eq!(truncate("hi", 5), "hi");
@@ -214,28 +107,9 @@ mod tests {
     }
 
     #[test]
-    fn score_badges() {
-        assert!(score_badge(95).contains("A"));
-        assert!(score_badge(85).contains("B"));
-        assert!(score_badge(55).contains("F"));
-    }
-
-    #[test]
     fn progress_formatting() {
         let p = progress(3, 5);
         assert!(p.contains("3/5"));
     }
 
-    #[test]
-    fn with_status_badges_in_table() {
-        let output = pretty_table(
-            &["Name", "Status"],
-            &[
-                vec!["ADR-001".into(), status_badge("accepted")],
-                vec!["ADR-002".into(), status_badge("proposed")],
-            ],
-        );
-        assert!(output.contains("ADR-001"));
-        assert!(output.contains("ADR-002"));
-    }
 }

@@ -8,7 +8,7 @@
 use std::path::Path;
 use tree_sitter::{Language as TsLanguage, Parser, Tree};
 
-use super::domain::{ExportDeclaration, ImportStatement, Language};
+use super::domain::{ExportDeclaration, ExportKind, ImportStatement, Language};
 use super::ports::{AnalysisError, AstPort};
 
 // ── Grammar Loading ──────────────────────────────────────
@@ -85,6 +85,49 @@ impl AstPort for TreeSitterAdapter {
             Language::Rust => extract_rust_exports(&root, source, &file),
             Language::Unknown => Ok(vec![]),
         }
+    }
+
+    fn extract_references(
+        &self,
+        _path: &Path,
+        source: &str,
+        lang: Language,
+    ) -> Result<std::collections::HashMap<String, usize>, AnalysisError> {
+        if lang == Language::Unknown {
+            return Ok(std::collections::HashMap::new());
+        }
+        let tree = parse_source(source, lang)?;
+        let mut out = std::collections::HashMap::new();
+        collect_references(&tree.root_node(), source, &mut out);
+        Ok(out)
+    }
+}
+
+/// Every identifier leaf in the tree, counted by text. Comments and string
+/// literals are not identifiers, so a name mentioned in prose does not count.
+fn collect_references(
+    node: &tree_sitter::Node,
+    source: &str,
+    out: &mut std::collections::HashMap<String, usize>,
+) {
+    if node.child_count() == 0 {
+        if matches!(
+            node.kind(),
+            "identifier"
+                | "type_identifier"
+                | "field_identifier"
+                | "property_identifier"
+                | "shorthand_property_identifier"
+                | "shorthand_property_identifier_pattern"
+                | "package_identifier"
+        ) {
+            *out.entry(node_text(*node, source)).or_insert(0) += 1;
+        }
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_references(&child, source, out);
     }
 }
 
@@ -455,6 +498,7 @@ fn extract_ts_exports(
                 name: "default".to_string(),
                 line,
                 hex_public,
+                kind: ExportKind::Default,
             });
             continue;
         }
@@ -465,33 +509,33 @@ fn extract_ts_exports(
             match inner.kind() {
                 "function_declaration" | "function_signature" => {
                     if let Some(n) = inner.child_by_field_name("name").map(|n| node_text(n, source)) {
-                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public, kind: ExportKind::Function });
                     }
                 }
                 "class_declaration" | "abstract_class_declaration" => {
                     if let Some(n) = inner.child_by_field_name("name").map(|n| node_text(n, source)) {
-                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public, kind: ExportKind::Type });
                     }
                 }
                 "interface_declaration" => {
                     if let Some(n) = inner.child_by_field_name("name").map(|n| node_text(n, source)) {
-                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public, kind: ExportKind::Type });
                     }
                 }
                 "type_alias_declaration" => {
                     if let Some(n) = inner.child_by_field_name("name").map(|n| node_text(n, source)) {
-                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public, kind: ExportKind::Type });
                     }
                 }
                 "enum_declaration" => {
                     if let Some(n) = inner.child_by_field_name("name").map(|n| node_text(n, source)) {
-                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public, kind: ExportKind::Type });
                     }
                 }
                 "lexical_declaration" => {
                     // export const foo = ..., bar = ... → ALL names
                     for n in extract_lexical_names(&inner, source) {
-                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public });
+                        exports.push(ExportDeclaration { file: file.to_string(), name: n, line, hex_public, kind: ExportKind::Value });
                     }
                 }
                 _ => {}
@@ -536,6 +580,7 @@ fn extract_go_exports(
                             name,
                             line: child.start_position().row + 1,
                             hex_public: false,
+                            kind: ExportKind::Function,
                         });
                     }
                 }
@@ -549,6 +594,7 @@ fn extract_go_exports(
                             name,
                             line: child.start_position().row + 1,
                             hex_public: false,
+                            kind: ExportKind::Method,
                         });
                     }
                 }
@@ -566,6 +612,7 @@ fn extract_go_exports(
                                     name,
                                     line: spec.start_position().row + 1,
                                     hex_public: false,
+                                    kind: ExportKind::Type,
                                 });
                             }
                         }
@@ -584,6 +631,7 @@ fn extract_go_exports(
                                     name,
                                     line: spec.start_position().row + 1,
                                     hex_public: false,
+                                    kind: ExportKind::Value,
                                 });
                             }
                         }
@@ -618,17 +666,13 @@ fn extract_rust_exports(
             continue;
         }
 
-        let name = match child.kind() {
-            "function_item" => child.child_by_field_name("name").map(|n| node_text(n, source)),
-            "struct_item" => child.child_by_field_name("name").map(|n| node_text(n, source)),
-            "enum_item" => child.child_by_field_name("name").map(|n| node_text(n, source)),
-            "trait_item" => child.child_by_field_name("name").map(|n| node_text(n, source)),
-            "type_item" => child.child_by_field_name("name").map(|n| node_text(n, source)),
-            "const_item" | "static_item" => {
-                child.child_by_field_name("name").map(|n| node_text(n, source))
-            }
-            "impl_item" => child.child_by_field_name("type").map(|n| node_text(n, source)),
-            _ => None,
+        let named = |field: &str| child.child_by_field_name(field).map(|n| node_text(n, source));
+        let (name, kind) = match child.kind() {
+            "function_item" => (named("name"), ExportKind::Function),
+            "struct_item" | "enum_item" | "trait_item" | "type_item" => (named("name"), ExportKind::Type),
+            "const_item" | "static_item" => (named("name"), ExportKind::Value),
+            "impl_item" => (named("type"), ExportKind::Impl),
+            _ => (None, ExportKind::Value),
         };
 
         if let Some(n) = name {
@@ -638,6 +682,7 @@ fn extract_rust_exports(
                 name: n,
                 line: child.start_position().row + 1,
                 hex_public,
+                kind,
             });
         }
     }

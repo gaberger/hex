@@ -34,7 +34,7 @@ pub fn tier_model(tier: &str) -> Option<String> {
 }
 
 /// [`tier_model`], rooted at an explicit directory. Tests drive this.
-pub fn tier_model_in(root: &Path, tier: &str) -> Option<String> {
+fn tier_model_in(root: &Path, tier: &str) -> Option<String> {
     let text = std::fs::read_to_string(root.join(".hex").join("project.json")).ok()?;
     let root: serde_json::Value = serde_json::from_str(&text).ok()?;
     let models = root.get("inference")?.get("tier_models")?;
@@ -49,7 +49,7 @@ pub fn react_models() -> Vec<String> {
 }
 
 /// [`react_models`], rooted at an explicit directory.
-pub fn react_models_in(root: &Path) -> Vec<String> {
+fn react_models_in(root: &Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(root.join(".hex").join("project.json")) else {
         return Vec::new();
     };

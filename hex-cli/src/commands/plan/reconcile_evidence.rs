@@ -187,19 +187,6 @@ fn find_symbol_hits(
     hits
 }
 
-/// Find commits touching the declared files whose message matches the
-/// phase/task-id convention:
-///   \(p[0-9]+(\.[0-9]+)*\)  — e.g. (p1.2)
-///   P[0-9]+(\.[0-9]+)*      — e.g. P1.2
-///   Task-Id:\s*P[0-9]+      — e.g. Task-Id: P1.2
-fn find_matching_commits(
-    files: &[String],
-    repo_root: &Path,
-    branch: &str,
-) -> Vec<String> {
-    find_matching_commits_scoped("", files, repo_root, branch, None)
-}
-
 /// Workplan-scoped variant. When `require_workplan_id` is `Some(id)`, the
 /// commit body (we use `--pretty=format:%H %s%n%b`) must reference that id;
 /// otherwise we accept any commit matching the task-id convention. When

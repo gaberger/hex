@@ -425,32 +425,6 @@ struct StepRow {
     deps: String,
 }
 
-#[derive(Tabled)]
-struct ExecutionRow {
-    #[tabled(rename = "Status")]
-    status: String,
-    #[tabled(rename = "Feature")]
-    feature: String,
-    #[tabled(rename = "Phase")]
-    phase: String,
-    #[tabled(rename = "Progress")]
-    progress_col: String,
-}
-
-#[derive(Tabled)]
-struct HistoryRow {
-    #[tabled(rename = "Status")]
-    status: String,
-    #[tabled(rename = "Feature")]
-    feature: String,
-    #[tabled(rename = "Tasks")]
-    tasks: String,
-    #[tabled(rename = "Started")]
-    started: String,
-    #[tabled(rename = "ID")]
-    id: String,
-}
-
 pub async fn run(action: PlanAction) -> anyhow::Result<()> {
     match action {
         PlanAction::Create { requirements, lang, adr, no_adr } => create_plan(&requirements, &lang, adr.as_deref(), no_adr).await,
@@ -1967,48 +1941,6 @@ fn commit_message_contains(sha: &str, needle: &str) -> anyhow::Result<bool> {
     }
     let body = String::from_utf8_lossy(&out.stdout);
     Ok(body.contains(needle))
-}
-
-/// Public wrapper for the improver act phase: draft a workplan stub from
-/// a prompt string. Returns the path of the created draft file so the
-/// caller can record it in dedup tracking. Bypasses `--background`
-/// chatter by always running silent.
-pub async fn draft_plan_silent(prompt: &str) -> anyhow::Result<std::path::PathBuf> {
-    use std::io::Write;
-    let trimmed = prompt.trim();
-    if trimmed.is_empty() {
-        anyhow::bail!("draft_plan_silent: empty prompt");
-    }
-    let dir = drafts_dir();
-    std::fs::create_dir_all(&dir)?;
-    let ts = chrono::Local::now().format("%y%m%d%H%M%S").to_string();
-    let slug = slug_from_prompt(trimmed);
-    // Hash the prompt to derive a 6-char unique suffix. Without this,
-    // multiple drafts created in the same second with similar prompts
-    // (5 TestCoverage findings → all slug "generate-tests-for-src-core")
-    // collide on filename and overwrite each other. Each call should
-    // produce a distinct file when the prompt is distinct.
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    trimmed.hash(&mut hasher);
-    let suffix = format!("{:06x}", (hasher.finish() & 0xFFFFFF));
-    let filename = format!("draft-{}-{}-{}.json", ts, slug, suffix);
-    let path = dir.join(&filename);
-    let draft_id = format!("draft-{}-{}-{}", ts, slug, suffix);
-    let draft = serde_json::json!({
-        "id": draft_id,
-        "kind": "workplan-draft",
-        "status": "pending-planner",
-        "adr": "ADR-2026-04-27-1100",
-        "created_at": chrono::Local::now().to_rfc3339(),
-        "origin": "improver-auto-act",
-        "prompt": trimmed,
-        "notes": "Auto-drafted by the improver act phase from a detector_health or q_starvation hypothesis. The improver couldn't fix the underlying surface (broken CLI, ineffective action mapping) automatically, so it captured the work as a draft for the operator (or a downstream planner agent) to pick up."
-    });
-    let mut file = std::fs::File::create(&path)?;
-    file.write_all(serde_json::to_string_pretty(&draft)?.as_bytes())?;
-    Ok(path)
 }
 
 /// This function deliberately does NOT spawn Claude subagents directly —

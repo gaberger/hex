@@ -194,7 +194,7 @@ pub fn context_for(
 /// neighbour file/symbol in its neighbourhood. These are the strings a memory
 /// entry would mention if it's *about* this file's area. Lowercased, deduped,
 /// short tokens dropped.
-pub fn anchor_terms(b: &ContextBundle) -> Vec<String> {
+fn anchor_terms(b: &ContextBundle) -> Vec<String> {
     let mut terms: Vec<String> = Vec::new();
     let mut push = |s: &str| {
         let t = s.trim().to_ascii_lowercase();

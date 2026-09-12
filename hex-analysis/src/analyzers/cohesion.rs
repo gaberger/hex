@@ -31,26 +31,26 @@ use walkdir::WalkDir;
 
 /// Method count above which a port is "fat" regardless of clustering.
 /// 8+ methods is almost always a kitchen-sink port.
-pub const HIGH_METHOD_COUNT_THRESHOLD: usize = 7;
+const HIGH_METHOD_COUNT_THRESHOLD: usize = 7;
 
 /// Minimum number of clusters required for the cross-cluster check to
 /// fire. With one cluster there are no pairs to score.
-pub const MIN_CLUSTER_COUNT: usize = 2;
+const MIN_CLUSTER_COUNT: usize = 2;
 
 /// Minimum method count required before the cluster-diversity branch
 /// fires. Without this, a 3-method trait like `{ping, send, close}`
 /// — naturally distinct lifecycle ops — would flag on every port.
-pub const MIN_METHOD_COUNT_FOR_CLUSTER_CHECK: usize = 5;
+const MIN_METHOD_COUNT_FOR_CLUSTER_CHECK: usize = 5;
 
 /// Average pairwise Jaccard on parameter-type sets *below* this value
 /// means clusters share no domain vocabulary — the trait is bundling
 /// unrelated concerns.
-pub const LOW_CROSS_CLUSTER_SIMILARITY: f64 = 0.2;
+const LOW_CROSS_CLUSTER_SIMILARITY: f64 = 0.2;
 
 /// Two prefix-buckets whose parameter-type Jaccard is **at least**
 /// this high are merged, so verb-prefix naming (`get_user`,
 /// `delete_user`) doesn't shatter a single concern across many buckets.
-pub const PARAMETER_MERGE_THRESHOLD: f64 = 0.5;
+const PARAMETER_MERGE_THRESHOLD: f64 = 0.5;
 
 /// One finding row in the analyzer's JSON envelope.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

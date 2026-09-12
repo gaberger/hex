@@ -46,12 +46,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-/// Default analysis window if the caller doesn't pass one.
-pub const DEFAULT_WINDOW: &str = "30d";
-
 /// Threshold above which churn-vs-decisions is considered drift.
 /// commits / accepted-adrs > 1.5 → finding.
-pub const RATIO_THRESHOLD: f64 = 1.5;
+const RATIO_THRESHOLD: f64 = 1.5;
 
 /// Pathspecs handed verbatim to `git log`. Cover both naming
 /// conventions:
@@ -65,7 +62,7 @@ pub const RATIO_THRESHOLD: f64 = 1.5;
 ///     wiring while `composition` catches Rust idiomatic naming.
 ///   * `*compose*.rs` — workplan-spec literal.
 ///   * `*lib.rs` — top-level crate root files.
-pub const WIRING_PATHSPECS: &[&str] = &[
+const WIRING_PATHSPECS: &[&str] = &[
     "*composition-root*",
     "*composition*.rs",
     "*compose*.rs",

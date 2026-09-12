@@ -45,7 +45,7 @@ pub fn load() -> Vec<Endpoint> {
 /// Entries carry camelCase keys and a `models` field that is a JSON array
 /// *encoded as a string* — an artifact of the SpacetimeDB row shape they were
 /// written from. Both quirks are absorbed here so nothing downstream knows.
-pub fn load_from(path: &std::path::Path) -> Vec<Endpoint> {
+fn load_from(path: &std::path::Path) -> Vec<Endpoint> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -121,7 +121,7 @@ fn endpoint_from_json(v: &serde_json::Value) -> Option<Endpoint> {
 ///
 /// `models` is a JSON array encoded as a string; a bare string, and a
 /// hand-edited file, are both tolerated.
-pub fn models_of(v: &serde_json::Value) -> Vec<String> {
+fn models_of(v: &serde_json::Value) -> Vec<String> {
     let Some(raw) = v.get("models").and_then(|m| m.as_str()) else {
         return v
             .get("model")

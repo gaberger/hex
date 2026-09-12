@@ -67,7 +67,7 @@ pub struct ReviewReport {
 
 /// Extract the first balanced JSON value (object or array) from agent prose. Pure and
 /// testable — `claude -p` often wraps JSON in markdown fences or commentary.
-pub fn extract_json(text: &str) -> Option<&str> {
+fn extract_json(text: &str) -> Option<&str> {
     let bytes = text.as_bytes();
     let start = bytes.iter().position(|&b| b == b'{' || b == b'[')?;
     let (open, close) = if bytes[start] == b'{' { (b'{', b'}') } else { (b'[', b']') };
