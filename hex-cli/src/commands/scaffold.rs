@@ -111,9 +111,14 @@ pub async fn run(args: ScaffoldArgs) -> Result<()> {
     // ── 1. the deterministic floor ───────────────────────────────────────
     std::fs::create_dir_all(&target)
         .with_context(|| format!("creating {}", target.display()))?;
-    super::init::create_scaffold(&target, &args.lang, &project_name)?;
+    let written = super::init::create_scaffold(&target, &args.lang, &project_name)?;
     super::init::create_adr_rules_toml(&target)?;
-    println!("  {} skeleton written ({}, deterministic)", "✓".green(), args.lang);
+    if written == 0 {
+        println!(
+            "  {} skeleton already present — nothing overwritten",
+            "○".dimmed()
+        );
+    }
 
     // ── 2. prove the floor before spending a frontier call ───────────────
     let (floor_ok, floor_out) = run_gate(&target, gate);
@@ -155,13 +160,32 @@ pub async fn run(args: ScaffoldArgs) -> Result<()> {
     }
 
     // ── 4. check the harness's verdict independently ─────────────────────
-    let (gate_ok, gate_out) = run_gate(&target, gate);
+    //
+    // Exit 0 is necessary and not sufficient: a suite that runs zero tests
+    // exits 0 too. The first real run of this verb produced one cargo binary
+    // reporting "0 passed" alongside three real ones, and this step said PASS
+    // without looking — the vacuous-gate hole, in the verb whose own docs cite
+    // the rule against it.
+    let (exit_ok, gate_out) = run_gate(&target, gate);
+    let observed = hex_exec::direct_exec::tests_observed(&gate_out);
+    let gate_ok = exit_ok && observed != Some(0);
     println!(
-        "  {} gate re-run: {}",
+        "  {} gate re-run: {}{}",
         if gate_ok { "✓".green() } else { "✗".red() },
-        if gate_ok { "PASS".green() } else { "FAIL".red() }
+        if gate_ok { "PASS".green() } else { "FAIL".red() },
+        match observed {
+            Some(n) if exit_ok => format!(" — {n} test(s) ran").dimmed().to_string(),
+            None if exit_ok => " — runner not recognised, test count unknown".dimmed().to_string(),
+            _ => String::new(),
+        }
     );
-    if !gate_ok {
+    if exit_ok && observed == Some(0) {
+        println!(
+            "      {}",
+            "the gate exited 0 having run no tests — a pass that verified nothing".yellow()
+        );
+    }
+    if !exit_ok {
         println!("{}", indent(&tail(&gate_out, 12), "      ").dimmed());
     }
 

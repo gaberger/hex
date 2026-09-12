@@ -188,13 +188,133 @@ static RUN_ID: AtomicU64 = AtomicU64::new(1);
 // review swarm. Global (not per-file) because git add/commit is process-global.
 static EXEC_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-/// A `cargo test <filter>` matching zero tests exits 0 with "running 0 tests" /
-/// "0 passed; 0 failed" — a vacuous pass. The gate must require the change to be
-/// actually exercised, so treat these as NOT satisfied.
+/// Did the evidence command actually exercise anything?
+///
+/// A `cargo test <filter>` matching zero tests exits 0 and prints "running 0
+/// tests" — a pass that verified nothing. The gate exists to require the change
+/// be *exercised*, so that is not satisfied.
+///
+/// **This counts across suites rather than matching one line.** The first
+/// version asked `output.contains("0 passed; 0 failed; 0 ignored")`, which is
+/// true of any multi-binary cargo run that happens to contain one empty target
+/// — a lib with no inline tests, a binary whose tests live in `tests/`. A real
+/// run of a scaffolded project, 39 tests passing across four binaries, was
+/// judged vacuous by that check and its commit would have been rejected. A gate
+/// that fails for a reason unrelated to what it gates is indistinguishable from
+/// the gated thing being broken.
+///
+/// Recognises cargo, `go test`, and node's TAP output. When it recognises
+/// nothing — a `make check`, a shell script — it returns `false`: we cannot
+/// judge, and rejecting every unrecognised runner would break more gates than
+/// it protects. That limit is real and is why this is a guard against the
+/// crudest case, not a proof of coverage.
 pub(crate) fn evidence_is_vacuous(output: &str) -> bool {
-    output.contains("running 0 tests")
-        || output.contains("0 passed; 0 failed; 0 ignored")
-        || output.contains("0 passed; 0 failed; 0 measured")
+    match tests_observed(output) {
+        Some(0) => true,
+        _ => false,
+    }
+}
+
+/// How many tests the output reports having run, or `None` if no runner we
+/// know about is recognisable in it.
+pub fn tests_observed(output: &str) -> Option<u64> {
+    let mut total: u64 = 0;
+    let mut recognised = false;
+
+    for line in output.lines() {
+        let t = line.trim();
+
+        // cargo: "test result: ok. 39 passed; 0 failed; …"
+        if let Some(rest) = t.strip_prefix("test result:") {
+            recognised = true;
+            if let Some(n) = rest.split_whitespace().find_map(|w| w.parse::<u64>().ok()) {
+                total = total.saturating_add(n);
+            }
+            continue;
+        }
+        // cargo: "running 12 tests"
+        if let Some(rest) = t.strip_prefix("running ") {
+            if rest.ends_with(" tests") || rest.ends_with(" test") {
+                recognised = true;
+            }
+            continue;
+        }
+        // node --test TAP: "# pass 88"
+        if let Some(rest) = t.strip_prefix("# pass ") {
+            recognised = true;
+            if let Ok(n) = rest.trim().parse::<u64>() {
+                total = total.saturating_add(n);
+            }
+            continue;
+        }
+        // go: "ok  \tpkg\t0.01s" means the package's tests ran and passed;
+        // "?   \tpkg\t[no test files]" means it had none.
+        if t.starts_with("ok  \t") || t.starts_with("ok\t") {
+            recognised = true;
+            total = total.saturating_add(1);
+            continue;
+        }
+        if t.contains("[no test files]") {
+            recognised = true;
+            continue;
+        }
+        if t.starts_with("--- PASS") || t.starts_with("=== RUN") {
+            recognised = true;
+            total = total.saturating_add(1);
+            continue;
+        }
+    }
+
+    recognised.then_some(total)
+}
+
+#[cfg(test)]
+mod vacuous_tests {
+    use super::{evidence_is_vacuous, tests_observed};
+
+    #[test]
+    fn a_cargo_run_with_no_tests_is_vacuous() {
+        let out = "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
+        assert!(evidence_is_vacuous(out));
+        assert_eq!(tests_observed(out), Some(0));
+    }
+
+    /// The regression. Four cargo binaries, one of them empty, 39 tests in
+    /// total. The old substring check called this vacuous and would have
+    /// rejected a correct, fully-gated commit.
+    #[test]
+    fn one_empty_binary_among_several_is_not_vacuous() {
+        let out = "\
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
+        assert_eq!(tests_observed(out), Some(39));
+        assert!(!evidence_is_vacuous(out));
+    }
+
+    #[test]
+    fn node_tap_output_is_counted() {
+        assert_eq!(tests_observed("# tests 88\n# pass 88\n# fail 0"), Some(88));
+        assert!(!evidence_is_vacuous("# pass 88"));
+        assert!(evidence_is_vacuous("# pass 0"));
+    }
+
+    #[test]
+    fn a_go_run_with_only_empty_packages_is_vacuous() {
+        assert!(evidence_is_vacuous("?   \tdemo/internal/ports\t[no test files]"));
+        assert!(!evidence_is_vacuous(
+            "?   \tdemo/internal/ports\t[no test files]\nok  \tdemo\t0.004s"
+        ));
+    }
+
+    /// An unrecognised runner is not judged. Rejecting every `make check`
+    /// would break more gates than the guard protects.
+    #[test]
+    fn an_unrecognised_runner_is_not_called_vacuous() {
+        assert_eq!(tests_observed("Build succeeded.\nAll checks passed."), None);
+        assert!(!evidence_is_vacuous("Build succeeded.\nAll checks passed."));
+    }
 }
 
 fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResult, duration_ms: u64) {

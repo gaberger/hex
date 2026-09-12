@@ -127,7 +127,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     // ── 6. Scaffold (optional) ────────────────────────────────────
     if args.scaffold {
-        create_scaffold(&target, &args.lang, &project_name)?;
+        create_scaffold(&target, &args.lang, &project_name)?;  // count reported inside
     }
 
     // ── 6a. git init + initial commit ─────────────────────────────
@@ -417,7 +417,7 @@ pub fn scaffold_gate(lang: &str) -> Option<&'static str> {
 ///
 /// Existing files are never overwritten, so re-running `hex init --scaffold`
 /// on a live project is safe.
-pub(crate) fn create_scaffold(target: &Path, lang: &str, project_name: &str) -> Result<()> {
+pub(crate) fn create_scaffold(target: &Path, lang: &str, project_name: &str) -> Result<usize> {
     let Some(gate) = scaffold_gate(lang) else {
         anyhow::bail!(
             "unknown --lang '{}'; expected one of: {}",
@@ -429,6 +429,11 @@ pub(crate) fn create_scaffold(target: &Path, lang: &str, project_name: &str) -> 
     let prefix = format!("scaffold/{lang}/");
     let vars = ScaffoldVars::from_name(project_name);
     let mut written = 0usize;
+    // Counted separately from `written`, because "every file was already there"
+    // and "this language ships no templates" are opposite conditions that both
+    // leave `written` at zero. Reporting the first as the second sent a reader
+    // looking for a missing asset bundle that was present and complete.
+    let mut found = 0usize;
 
     for path in crate::assets::Assets::iter() {
         let Some(rel) = path.strip_prefix(&prefix) else {
@@ -437,6 +442,7 @@ pub(crate) fn create_scaffold(target: &Path, lang: &str, project_name: &str) -> 
         // `.tmpl` marks a file whose *name* would otherwise be picked up by a
         // build tool sitting in the assets tree. The suffix is dropped here.
         let rel = rel.strip_suffix(".tmpl").unwrap_or(rel);
+        found += 1;
         let dest = target.join(rel);
         if dest.exists() {
             continue;
@@ -451,11 +457,14 @@ pub(crate) fn create_scaffold(target: &Path, lang: &str, project_name: &str) -> 
         written += 1;
     }
 
-    if written == 0 {
+    if found == 0 {
         anyhow::bail!("no scaffold assets embedded for --lang {lang}");
     }
+    if written == 0 {
+        return Ok(0);
+    }
     println!("  {} {} files ({}) — gate: {}", "\u{2713}".green(), written, lang, gate);
-    Ok(())
+    Ok(written)
 }
 
 /// The substitutions a scaffold template may use.
