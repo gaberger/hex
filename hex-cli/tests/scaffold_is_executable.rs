@@ -258,3 +258,115 @@ fn a_clean_scaffold_satisfies_its_own_rules() {
         );
     }
 }
+
+/// `--exit-code` must see violations the deep scan finds in a nested source
+/// tree.
+///
+/// The shallow import scanner walks the root `src/`. The tree-sitter scan walks
+/// everything. A project whose violations live under
+/// `adapters/primary/<client>/src/` is invisible to the first and plain to the
+/// second. Before this test, the exit code summed only the first, so such a
+/// project printed "Boundary violations: 17" and exited 0.
+///
+/// The fixture is that shape: a nested client with its own `domain/`, and a
+/// component in it that imports the domain directly, which is rule 4.
+#[test]
+fn exit_code_sees_violations_in_a_nested_source_tree() {
+    let dir = scaffold("ts");
+    let target = dir.path().join("demo-app");
+    let client = target.join("src/adapters/primary/web-client/src");
+    std::fs::create_dir_all(client.join("domain")).expect("mkdir domain");
+    std::fs::create_dir_all(client.join("components")).expect("mkdir components");
+    std::fs::write(
+        client.join("domain/titleIndex.ts"),
+        "export function titleIndex(): string[] { return []; }\n",
+    )
+    .expect("write domain");
+    std::fs::write(
+        client.join("components/Sidebar.ts"),
+        "import { titleIndex } from '../domain/titleIndex';\nexport const n = titleIndex().length;\n",
+    )
+    .expect("write component");
+
+    let out = Command::new(hex_bin())
+        .args(["analyze", ".", "--exit-code"])
+        .current_dir(&target)
+        .output()
+        .expect("run hex analyze");
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+
+    assert!(
+        text.contains("adapters must not import from domain"),
+        "the deep scan did not report the nested violation:\n{text}"
+    );
+    assert!(
+        !text.contains("0 boundary violations"),
+        "the summary says zero while listing a violation:\n{text}"
+    );
+    assert!(
+        !out.status.success(),
+        "--exit-code returned 0 with a reported violation:\n{text}"
+    );
+}
+
+/// And the clean case must still exit 0, or the fix has made every project red.
+#[test]
+fn exit_code_is_zero_on_a_clean_scaffold() {
+    let dir = scaffold("ts");
+    let target = dir.path().join("demo-app");
+    let out = Command::new(hex_bin())
+        .args(["analyze", ".", "--exit-code"])
+        .current_dir(&target)
+        .output()
+        .expect("run hex analyze");
+    assert!(
+        out.status.success(),
+        "a clean scaffold exited nonzero:\n{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+/// ADR *warnings* do not fail `--exit-code`. ADR *errors* do. `--strict`
+/// promotes warnings.
+///
+/// Before this test, `--exit-code` counted every ADR finding regardless of
+/// severity, which made `--strict` redundant and made hex's own CI gate red on
+/// four findings its rule file marks as warnings.
+#[test]
+fn exit_code_ignores_adr_warnings_and_strict_does_not() {
+    let dir = scaffold("rust");
+    let target = dir.path().join("demo-app");
+    // A narrowing `as` cast is a warning in the shipped rule set.
+    std::fs::write(
+        target.join("src/warn.rs"),
+        "pub fn f(x: u64) -> u32 { x as u32 }\n",
+    )
+    .expect("write warning");
+
+    let run = |extra: &[&str]| {
+        let mut args = vec!["analyze", "."];
+        args.extend_from_slice(extra);
+        Command::new(hex_bin())
+            .args(&args)
+            .current_dir(&target)
+            .output()
+            .expect("run hex analyze")
+    };
+
+    let plain = run(&["--exit-code"]);
+    let text = String::from_utf8_lossy(&plain.stdout);
+    assert!(text.contains("1 warning(s)"), "the warning was not reported:\n{text}");
+    assert!(plain.status.success(), "--exit-code failed on a warning alone:\n{text}");
+
+    let strict = run(&["--strict"]);
+    assert!(!strict.status.success(), "--strict passed with a warning present");
+
+    // And an ADR *error* must fail --exit-code on its own.
+    std::fs::write(
+        target.join("src/err.rs"),
+        "pub const P: &str = \"/home/someone/fixed\";\n",
+    )
+    .expect("write error");
+    let with_error = run(&["--exit-code"]);
+    assert!(!with_error.status.success(), "--exit-code passed with an ADR error present");
+}

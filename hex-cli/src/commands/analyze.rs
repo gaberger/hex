@@ -200,11 +200,9 @@ pub async fn run(
         println!("    {} {} source files scanned", "\u{2023}".dimmed(), total_files);
 
         all_violation_count = local_violations.len() + rust_violations.len();
-        if all_violation_count == 0 {
-            println!("    {} 0 boundary violations", "\u{2713}".green());
-        } else {
+        if all_violation_count > 0 {
             println!(
-                "    {} {} boundary violation(s)",
+                "    {} {} boundary violation(s) (import scan)",
                 "\u{26a0}".yellow(),
                 all_violation_count
             );
@@ -235,6 +233,12 @@ pub async fn run(
         // registration step. Same `hex-analysis` engine either way.
         let deep_score: Option<u64> = match deep_analysis(&root).await {
             Ok(result) => {
+                // This count used to be printed and then dropped. `--exit-code`
+                // summed only the shallow scanners, so a project whose
+                // violations lived in a nested source tree printed
+                // "Boundary violations: 17" and exited 0. The CI gate was
+                // vacuous for exactly the case it exists for.
+                all_violation_count += result.violations.len();
                 if !result.violations.is_empty() {
                     println!(
                         "    {} Boundary violations: {}",
@@ -269,6 +273,10 @@ pub async fn run(
                 None
             }
         };
+
+        if all_violation_count == 0 {
+            println!("    {} 0 boundary violations", "\u{2713}".green());
+        }
 
         // Compute final score and grade. The tree-sitter score wins when the
         // deep pass ran; the offline heuristic is the fallback.
@@ -371,9 +379,14 @@ pub async fn run(
 
     // Store compliance results in HexFlo memory (best-effort)
 
-    let total_violations = all_violation_count + adr_violations.len();
+    // Boundary violations and ADR *errors* fail the gate. ADR warnings do not,
+    // because that is what `--strict` is for. Counting warnings here made
+    // `--strict` redundant and made hex's own CI gate red on four warnings
+    // that its own documentation classifies as advisory.
+    let adr_errors = adr_violations.iter().filter(|v| v.severity == "error").count();
+    let total_violations = all_violation_count + adr_errors;
 
-    // --exit-code: exit 1 if any violations found
+    // --exit-code: exit 1 on any boundary violation or ADR error
     if exit_code && total_violations > 0 {
         std::process::exit(1);
     }
