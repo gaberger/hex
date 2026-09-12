@@ -98,15 +98,15 @@ Two gates, because they answer different questions.
 
 ```mermaid
 flowchart TB
-    A["hex scaffold '&lt;what to build&gt;'"] --> B["<b>1. floor</b><br/>deterministic skeleton from<br/>templates in the binary"]
-    B --> C{"<b>floor gate</b><br/>does the skeleton run<br/>on this machine?"}
+    A["hex scaffold 'what to build'"] --> B["1. floor<br/>deterministic skeleton from<br/>templates in the binary"]
+    B --> C{"floor gate<br/>does the skeleton run<br/>on this machine?"}
     C -->|no| X["stop, before spending<br/>a model call"]
-    C -->|yes| D["<b>2. build</b><br/>N designs, each red-teamed,<br/>then built to the gate"]
-    D --> E{"<b>gate</b><br/>does it run?"}
+    C -->|yes| D["2. build<br/>N designs, each red-teamed,<br/>then built to the gate"]
+    D --> E{"gate<br/>does it run?"}
     E -->|no| Y["fail"]
-    E -->|yes| F{"<b>architecture grade</b><br/>is it the right shape?"}
+    E -->|yes| F{"architecture grade<br/>is it the right shape?"}
     F -->|"below floor"| Y
-    F -->|"A or better"| G["<b>3. ship</b><br/>with rules that travel<br/>with the project"]
+    F -->|"A or better"| G["3. ship<br/>with rules that travel<br/>with the project"]
 
     style C fill:#2d333b,stroke:#539bf5,color:#adbac7
     style E fill:#2d333b,stroke:#539bf5,color:#adbac7
@@ -139,12 +139,12 @@ separation of concerns" cannot be graded. This can:
 
 ```mermaid
 flowchart TB
-    PA["<b>adapters/primary</b><br/>HTTP &middot; CLI &middot; UI"]
-    SA["<b>adapters/secondary</b><br/>database &middot; files &middot; APIs"]
-    U["<b>usecases</b><br/>orchestration"]
-    P["<b>ports</b><br/>interfaces"]
-    D["<b>domain</b><br/>pure logic, imports nothing"]
-    CR["<b>composition root</b><br/>the only file that may<br/>import an adapter"]
+    PA["adapters/primary<br/>HTTP · CLI · UI"]
+    SA["adapters/secondary<br/>database · files · APIs"]
+    U["usecases<br/>orchestration"]
+    P["ports<br/>interfaces"]
+    D["domain<br/>pure logic, imports nothing"]
+    CR["composition root<br/>the only file that may<br/>import an adapter"]
 
     PA -->|"ports only"| P
     SA -->|"ports only"| P

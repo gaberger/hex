@@ -302,3 +302,62 @@ Keep this too. Also mine.
     let after = std::fs::read_to_string(target.join("CLAUDE.md")).expect("read");
     assert_eq!(before, after, "a second refresh changed the file");
 }
+
+/// Mermaid diagrams must survive GitHub's renderer.
+///
+/// GitHub runs mermaid with `htmlLabels: false` and `securityLevel: strict`.
+/// Under those settings a `<b>` tag inside a node label is not interpreted; it
+/// is printed, so the reader sees the characters `<b>` in the middle of a box.
+/// HTML entities leak the same way: `&lt;` renders as the five characters
+/// `&lt;`, not as `<`.
+///
+/// Neither shows up locally, because `mermaid-cli` defaults to `htmlLabels:
+/// true` and renders all of it correctly. A diagram checked only on a laptop
+/// looks finished and arrives broken, which is the same failure as a gate that
+/// passes for the wrong reason.
+///
+/// `<br/>` is fine and becomes a real line break. It is the exception.
+#[test]
+fn mermaid_labels_contain_no_html_github_will_not_render() {
+    const BANNED: &[(&str, &str)] = &[
+        ("<b>", "bold tags print literally under htmlLabels:false"),
+        ("</b>", "bold tags print literally under htmlLabels:false"),
+        ("<i>", "italic tags print literally under htmlLabels:false"),
+        ("&lt;", "HTML entities print literally; use the character itself"),
+        ("&gt;", "HTML entities print literally; use the character itself"),
+        ("&amp;", "HTML entities print literally; use the character itself"),
+        ("&middot;", "HTML entities print literally; use the character itself"),
+        ("&nbsp;", "HTML entities print literally; use the character itself"),
+    ];
+
+    let docs: &[(&str, &str)] = &[
+        ("README.md", include_str!("../../README.md")),
+        ("ARCHITECTURE.md", include_str!("../../ARCHITECTURE.md")),
+    ];
+
+    let mut blocks_seen = 0usize;
+    let mut problems: Vec<String> = Vec::new();
+
+    for (name, body) in docs {
+        let mut rest = *body;
+        while let Some(open) = rest.find("```mermaid") {
+            let after = &rest[open + "```mermaid".len()..];
+            let Some(close) = after.find("```") else { break };
+            let block = &after[..close];
+            blocks_seen += 1;
+            for (needle, why) in BANNED {
+                if block.contains(needle) {
+                    problems.push(format!("{name}: mermaid block contains `{needle}` — {why}"));
+                }
+            }
+            rest = &after[close + 3..];
+        }
+    }
+
+    assert!(
+        blocks_seen >= 5,
+        "only found {blocks_seen} mermaid blocks — the extractor is broken, so this \
+         test would pass without checking anything"
+    );
+    assert!(problems.is_empty(), "{}", problems.join("\n  "));
+}

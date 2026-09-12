@@ -13,9 +13,9 @@ Two gates decide whether generated work counts:
 
 ```mermaid
 flowchart LR
-    W["work<br/>(scaffold · build · edit)"] --> G1{"<b>gate</b><br/>a command that<br/>must exit 0"}
+    W["work<br/>(scaffold · build · edit)"] --> G1{"gate<br/>a command that<br/>must exit 0"}
     G1 -->|nonzero| R["revert"]
-    G1 -->|"exit 0"| G2{"<b>architecture grade</b><br/>boundary analysis<br/>over the AST"}
+    G1 -->|"exit 0"| G2{"architecture grade<br/>boundary analysis<br/>over the AST"}
     G2 -->|"below floor"| R
     G2 -->|"meets floor"| C["commit"]
 
@@ -106,14 +106,14 @@ Eight crates, one binary. The dependency direction is the architecture:
 
 ```mermaid
 flowchart TB
-    CLI["<b>hex-cli</b><br/>the binary · the only<br/>composition root"]
-    EXEC["<b>hex-exec</b><br/>agent loop · harness<br/>guarded tools · local store"]
-    INFER["<b>hex-infer</b><br/>every inference adapter<br/>tier resolution"]
-    ANAL["<b>hex-analysis</b><br/>boundary checking<br/>health detectors"]
-    GRAPH["<b>hex-graph</b><br/>code knowledge graph"]
-    GIT["<b>hex-git</b>"]
-    PARSE["<b>hex-parser</b>"]
-    CORE["<b>hex-core</b><br/>contract surface<br/>zero runtime deps"]
+    CLI["hex-cli<br/>the binary · the only<br/>composition root"]
+    EXEC["hex-exec<br/>agent loop · harness<br/>guarded tools · local store"]
+    INFER["hex-infer<br/>every inference adapter<br/>tier resolution"]
+    ANAL["hex-analysis<br/>boundary checking<br/>health detectors"]
+    GRAPH["hex-graph<br/>code knowledge graph"]
+    GIT["hex-git"]
+    PARSE["hex-parser"]
+    CORE["hex-core<br/>contract surface<br/>zero runtime deps"]
 
     CLI --> EXEC
     CLI --> ANAL
