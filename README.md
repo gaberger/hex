@@ -5,302 +5,184 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-edition%202021-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
-  <a href="docs/adrs/INDEX.md"><img src="https://img.shields.io/badge/ADRs-264-bc8cff?style=flat-square" alt="ADRs"></a>
   <img src="https://img.shields.io/badge/tests-977-3fb950?style=flat-square" alt="977 tests">
   <img src="https://img.shields.io/badge/self--grade-A%2B%20100%2F100-3fb950?style=flat-square" alt="A+ 100/100">
-  <a href="#what-is-not-proven"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="Alpha"></a>
+  <a href="#limits"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="Alpha"></a>
 </p>
 
 <p align="center">
   <strong>A scaffolding system for hexagonal projects, in one binary.</strong><br>
-  It creates them, grows them, and stops them drifting — every step gated on a<br>
-  command that must exit 0 and an architecture grade that must hold.<br>
-  No daemon. No database. Nothing to start.
+  An AI writes the code. Two gates decide whether it counts:<br>
+  a command that must exit 0, and an architecture grade that must hold.
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#the-receipts">Receipts</a> ·
-  <a href="ARCHITECTURE.md">Architecture</a> ·
-  <a href="docs/adrs/INDEX.md">ADR ledger</a>
+  <a href="#the-problem">The problem</a> &middot;
+  <a href="#quick-start">Quick start</a> &middot;
+  <a href="#why-hexagonal">Why hexagonal</a> &middot;
+  <a href="#limits">Limits</a>
 </p>
 
 ---
 
-## The whole idea
+## The problem
 
-Most scaffolding tools hand you a folder and wish you luck. The template is right on
-day one and wrong by week three, because nothing checks it again.
+Generating code stopped being the bottleneck. Checking it didn't.
 
-hex scaffolds a project and then keeps checking. Three things, in order:
+An AI agent will produce a working feature in minutes. What it will *also* do,
+reliably, is produce a feature whose tests pass and whose shape is wrong — a use
+case that imports a database driver, a domain type that depends on an HTTP client.
+Nothing fails. The suite is green. The next change is a little harder, and the one
+after that is harder still.
 
-**1. A floor that runs.** Deterministic, byte-identical every time, from templates
-embedded in the binary. A manifest, a correct ports-and-adapters layout, four passing
-tests, and a gate command. No inference involved.
+```mermaid
+flowchart LR
+    A[describe the feature] --> B[agent writes code]
+    B --> C{tests pass?}
+    C -->|no| B
+    C -->|yes| D[ship]
+    D -.-> E[shape drifts, silently]
+    E -.-> F[week 12: nothing is<br/>where it belongs]
 
-```bash
-hex init . --scaffold --lang rust        # skeleton + .hex/ADR-rules.toml
+    style C fill:#2d333b,stroke:#539bf5,color:#adbac7
+    style E fill:#2d333b,stroke:#c69026,color:#adbac7
+    style F fill:#2d333b,stroke:#e5534b,color:#adbac7
 ```
 
-**2. Your project, built onto that floor.** A frontier model writes it; two gates
-decide whether it counts.
+A test suite answers *does it run*. Nothing in that loop answers *is it still the
+system I designed*.
 
-```bash
-hex scaffold "A bookmark service: SQLite store, axum HTTP API, tag search" \
-  --target ./linkstore --lang rust --grade A
+### Why spec-driven development doesn't close it
+
+The common answer is to write the spec first and have the agent implement it. That
+moves the problem rather than solving it, for one structural reason:
+
+> **A spec is prose. Prose cannot fail.**
+
+Code drifts from a spec in silence, because nothing ever runs the spec. In a
+110-spec corpus we audited, **44 described features that had already been deleted** —
+and not one raised an error, ever. A document that cannot fail is indistinguishable
+from a document that is wrong, and you cannot tell which one you are holding.
+
+```mermaid
+flowchart LR
+    subgraph S["spec-driven"]
+        direction TB
+        S1["spec: prose"] -. "no link that<br/>can break" .-> S2["code"]
+        S2 --> S3["tests pass"]
+        S1 -.-> S4["spec silently stops<br/>being true"]
+    end
+
+    subgraph G["gate-driven"]
+        direction TB
+        G1["gate: a command<br/>that must exit 0"] ==> G2["code"]
+        G2 ==> G3{"run the gate"}
+        G3 -->|"exit 0"| G4["commit"]
+        G3 -->|"nonzero"| G5["revert"]
+    end
+
+    style S4 fill:#2d333b,stroke:#e5534b,color:#adbac7
+    style G1 fill:#2d333b,stroke:#57ab5a,color:#adbac7
+    style G4 fill:#2d333b,stroke:#57ab5a,color:#adbac7
+    style G5 fill:#2d333b,stroke:#c69026,color:#adbac7
 ```
 
+A gate is executable, so it fails the moment it stops being true. That is the whole
+difference, and it is why hex has no spec step.
+
+---
+
+## What hex does
+
+Two gates, because they answer different questions.
+
+```mermaid
+flowchart TB
+    A["hex scaffold '&lt;what to build&gt;'"] --> B["<b>1. floor</b><br/>deterministic skeleton from<br/>templates in the binary"]
+    B --> C{"<b>floor gate</b><br/>does the skeleton run<br/>on this machine?"}
+    C -->|no| X["stop — before spending<br/>a model call"]
+    C -->|yes| D["<b>2. build</b><br/>N designs, each red-teamed,<br/>then built to the gate"]
+    D --> E{"<b>gate</b><br/>does it run?"}
+    E -->|no| Y["fail"]
+    E -->|yes| F{"<b>architecture grade</b><br/>is it the right shape?"}
+    F -->|"below floor"| Y
+    F -->|"A or better"| G["<b>3. ship</b><br/>with rules that travel<br/>with the project"]
+
+    style C fill:#2d333b,stroke:#539bf5,color:#adbac7
+    style E fill:#2d333b,stroke:#539bf5,color:#adbac7
+    style F fill:#2d333b,stroke:#986ee2,color:#adbac7
+    style G fill:#2d333b,stroke:#57ab5a,color:#adbac7
+    style X fill:#2d333b,stroke:#c69026,color:#adbac7
+    style Y fill:#2d333b,stroke:#e5534b,color:#adbac7
 ```
-✓ 8 files (rust) — gate: cargo test
-✓ floor gate green: cargo test                      ← before spending a model call
-✓ 2 designs → 2 critiques → spec 33505ch → build GREEN
-✓ gate re-run: PASS — 27 test(s) ran                ← does it run?
-✓ architecture grade: A+ — score 100/100 (floor A)  ← is it what you asked for?
+
+**The floor is not generated.** It comes from templates compiled into the binary —
+byte-identical on every machine, every run. A scaffold you cannot reproduce is not a
+foundation, it is a draft. Its gate runs *before* any model call, because a skeleton
+that will not build on your machine makes everything measured after it meaningless.
+
+**The second gate is the one that is usually missing.** A test suite will happily
+pass a program whose use case imports a database driver. `hex analyze` grades the
+boundaries, and `hex scaffold --grade A` fails the build when the grade is not
+earned.
+
+**Rules travel with the project.** Every scaffold ships a `.hex/ADR-rules.toml` that
+`hex analyze` runs from then on. The scaffold is not a starting point you leave
+behind; it is the contract the project keeps being measured against.
+
+---
+
+## Why hexagonal
+
+Because it is the one architecture whose rules are *mechanically checkable*. "Good
+separation of concerns" cannot be graded. This can:
+
+```mermaid
+flowchart TB
+    PA["<b>adapters/primary</b><br/>HTTP &middot; CLI &middot; UI"]
+    SA["<b>adapters/secondary</b><br/>database &middot; files &middot; APIs"]
+    U["<b>usecases</b><br/>orchestration"]
+    P["<b>ports</b><br/>interfaces"]
+    D["<b>domain</b><br/>pure logic, imports nothing"]
+    CR["<b>composition root</b><br/>the only file that may<br/>import an adapter"]
+
+    PA -->|"ports only"| P
+    SA -->|"ports only"| P
+    U --> P
+    P --> D
+    CR -.-> PA
+    CR -.-> SA
+
+    style D fill:#2d333b,stroke:#57ab5a,color:#adbac7
+    style P fill:#2d333b,stroke:#539bf5,color:#adbac7
+    style U fill:#2d333b,stroke:#539bf5,color:#adbac7
+    style PA fill:#2d333b,stroke:#986ee2,color:#adbac7
+    style SA fill:#2d333b,stroke:#986ee2,color:#adbac7
+    style CR fill:#2d333b,stroke:#c69026,color:#adbac7
 ```
 
-**3. Rules that travel with it.** Every scaffolded project gets a
-`.hex/ADR-rules.toml`, and `hex analyze` runs it. Each rule cites the incident that
-produced it. The scaffold is not a starting point you leave behind — it is the
-contract the project is measured against from then on.
+Every arrow points inward, and `hex analyze` walks the AST to check it. The rules are
+short enough to state and strict enough to fail:
 
-### Then you grow it
-
-| Verb | For |
+| # | Rule |
 |---|---|
-| **`hex scaffold`** | Create or extend a project on the hexagonal floor |
-| **`hex build`** | Add a whole subsystem from one description, built to a gate |
-| **`hex do`** | One bounded change, one file, one gate |
-| **`hex harden`** | Point it at working code; it hunts bugs the tests missed |
+| 1 | `domain/` imports only `domain/` |
+| 2 | `ports/` imports `domain/` only |
+| 3 | `usecases/` imports `domain/` + `ports/` only |
+| 4 | adapters import `ports/` **only** — never the domain directly |
+| 5 | adapters never import other adapters |
+| 6 | the composition root is the only file that imports an adapter |
 
-Each is the same bargain at a different size: **a command that must exit 0 decides
-whether the work counts, and the architecture grade decides whether it belongs.**
+Rule 4 is the one implementations break. An adapter that needs a domain type gets it
+because the **port re-exports it** — so every adapter has exactly one edge into the
+core, and swapping a database means touching one file.
 
-```bash
-hex do run "make add() return a + b, not a - b" \
-  --file src/lib.rs --evidence "cargo test --test add"
-```
+**Why this beats a linter.** A style rule tells you a line is ugly. These tell you a
+*dependency* is wrong, which is the thing that makes a codebase expensive to change.
+And because it is a graph property rather than a matter of taste, a number falls out
+of it — which is what lets it be a gate instead of a suggestion.
 
-hex edits, runs your command, and **commits only if it exits 0**. Otherwise the edit
-is reverted. A model that wanders commits nothing.
-
-## Why a gate instead of a spec
-
-hex used to be specs-first: write behavioural specs, then code. That was measured and
-retired ([ADR-2026-09-11-1900](docs/adrs/ADR-2026-09-11-1900-gate-first-development.md)).
-
-Of 110 specs in this repository, **44 described features that had been deleted months
-earlier and nothing ever failed.** Of the 17 that survived an audit, **one named a command
-you could run.** A document that cannot fail cannot be trusted, because nothing separates
-it from a document that is wrong.
-
-So the pipeline is now:
-
-```
-Decide (ADR) → Gate (the command that must exit 0, written first)
-            → Diverge (N designs, each red-teamed) → Build to the gate
-            → Harden (adversarial hunt, every fix gated) → Ship
-```
-
-Three rules:
-
-- **A spec that cannot be run does not exist.** It becomes a gate, or it becomes ADR prose
-  — history, which is allowed to be unexecutable because it never claims to describe the present.
-- **The gate is written before the code and is not derived from it.** A gate generated from
-  the implementation tests the implementation against itself.
-- **A vacuous gate is a failed gate.** A suite that exits 0 having run zero tests is not a pass.
-
-## The receipts
-
-Six projects scaffolded from one description each, three languages, every gate re-run
-independently from a clean build:
-
-| Project | Language | Tests | What it proves |
-|---|---|---:|---|
-| [`ratelimiter-proof`](examples/ratelimiter-proof) | Rust | 18 | `hex harden` found **3 real bugs** its own 14 passing tests missed |
-| [`game-life-rs`](examples/game-life-rs) | Rust | 36 | Conway, from one sentence |
-| [`game-ttt-go`](examples/game-ttt-go) | Go | ✓ | Perfect minimax |
-| [`game-2048-ts`](examples/game-2048-ts) | TypeScript | 88 | Gate falsified 5 ways before being believed |
-| [`url-shortener-rs`](examples/url-shortener-rs) | Rust | 39 | A+ 100/100 |
-| [`linkstore-svc`](examples/linkstore-svc) | Rust | 27 | **Real I/O** — axum, SQLite, migration, 12 end-to-end tests |
-
-### The bug `hex harden` is proudest of
-
-The rate limiter's 14 tests all passed. The adversarial pass read a comment that said:
-
-> `u128` cannot overflow on a product of two `u64` values, so this does the job of `checked_mul`.
-
-`Duration::as_nanos` returns a `u128`, not a `u64`. The product overflows, an `as` cast
-truncates it, and the result is a rate limiter that **silently limits nothing**.
-
-No spec would have caught that — a spec describes intent, and the intent here was correct.
-Only an adversary reading the code finds it.
-
-### Proving the tests aren't decoration
-
-A passing test proves nothing until it can fail. For `linkstore-svc`:
-
-| Sabotage | Result |
-|---|---|
-| HTTP `201` → `200` in the primary adapter | **4 tests failed** |
-| Domain stops stripping tracking parameters | **3 tests failed** |
-| Restored | **27 passed, 0 failed** |
-
-### And one codebase hex did not write
-
-Six greenfield projects prove hex can *build*. They say nothing about whether it
-can change code someone else wrote. So: [`weave`](docs/analysis/2609120300-brownfield-trial.md)
-— 1,685 files, 495 test files, a different project entirely. Ten realistic
-single-token bugs injected into ten files, each verified to break a real test first.
-
-| | Result |
-|---|---:|
-| **Repair**, given the file and the failing test | **10/10** — every one restoring the original line exactly, **0** test files edited |
-| **Localisation**, given only the failing test name | **1/10** — and 0/10 in the top three |
-
-Read those two numbers separately. The first is the easy half: a frontier model
-told which file and which test will find a `>` that should be `>=`. The second is
-what "point it at a codebase" actually means, and **`hex do run` requires
-`--file`** — no verb accepts "this test fails, find why."
-
-## Why the grade is a gate and not a report
-
-This is the part that makes it a scaffolding *system* rather than a generator.
-
-A test suite tells you the code works. It tells you nothing about whether the shape
-survived. A frontier model will happily hand you a working program whose use case
-imports a database driver — and every test will pass.
-
-So `hex scaffold --grade A` **fails the build** if the result does not earn the grade.
-`hex analyze` is the grader, and hex scores **A+ / 100 / 0 violations** against its own
-analyzer. The daemon it replaced scored **F (30/100)**.
-
-That gate earned its keep on `linkstore-svc`. With a live SQLite file and a live HTTP
-listener, the shortcut is a use case reaching for `rusqlite` or an axum type — and no
-pure-function project ever puts that under pressure. It didn't:
-
-```
-src/usecases/  →  crate::domain, crate::ports, std::sync::Arc
-```
-
-No database, no HTTP, no runtime, in the layer that must not have them.
-
-## What the scaffold carries: rules, not advice
-
-A scaffolded `CLAUDE.md` full of good intentions rots. This repository proved it — the
-template shipped into every project told the agent to run five verbs that had been
-deleted months earlier, and nothing failed, because prose cannot fail.
-
-So the scaffold ships `.hex/ADR-rules.toml` instead, and `hex analyze` runs it. Each rule
-cites the incident that produced it. An unenforced rule is prose with extra steps, so each
-has a test that plants a violation and proves it fires. The advice that genuinely cannot be
-pattern-matched stays prose — and is labelled as unenforceable, with its reason.
-
-hex was then handed its own rule file, and the rules found four live defects in hex:
-
-- **The health score wrapped.** A `usize` penalty narrowed with `as u8`: 26 boundary
-  violations is a penalty of 260, which is `4` in a `u8`. The worst code in the repository
-  scored **96/100**, and the score *rose* as violations were added.
-- **`hex bootstrap` validated the wrong models** — it checked three model ids the project
-  did not configure, while `ready` ignored model checks entirely. An install with no models
-  at all reported ready.
-- **`hex bootstrap` hung on Linux** — it awaited a foreground server process that never exits.
-- **`hex analyze` printed a green tick for a check it had skipped** — "no rules file found"
-  and "✓ All ADR rules satisfied", on the same run.
-
-That last one is the lesson committed by the code that reports the lesson. It is the failure
-mode this project takes most seriously: **a gate that fails — or passes — for a reason
-unrelated to what it gates is indistinguishable from the truth.**
-
-The brownfield trial found the worst instance of it. In a fresh clone with no
-`git config user.email` — the default state of any clone or CI box — hex made a
-correct fix, watched its gate pass with 9 tests green, failed to `git commit`,
-**reverted the fix**, and reported *"did not pass evidence"*. It destroyed correct
-work and blamed the tests. All three commit paths had it; two reverted. Fixed, and
-the change is now kept and unstaged with a message naming the half that failed.
-
-## Local models: the honest picture
-
-hex is model-agnostic (Ollama, vLLM, OpenAI-compatible, Claude). But the *agentic loop* —
-multi-turn tool use, not single-shot codegen — is demanding, and we measured it.
-
-**No single local model wins.** A benchmark across the reachable models reordered the best
-model on *every* fixture. The top-of-the-leaderboard local model (`gpt-oss:20b`) scored
-**last** on our grid. Leaderboard scores do not predict agentic-loop performance.
-
-**The language matters as much as the model.** The same CSV-parser task, three languages,
-per-model pass rate:
-
-| Model | Rust | TS | Go |
-|---|---|---|---|
-| qwen2.5-coder:14b | 0/5 | **2/3** | 0/3 |
-| gpt-oss:20b | 0/5 | **1/3** | 0/3 |
-| devstral-small-2:24b | 5/5 | 3/3 | 2/3 |
-| gemma3:12b | 4/5 | 2/3 | 1/3 |
-
-The lesson isn't "static typing is hard". **TypeScript is uniquely forgiving; Rust *and* Go
-are strict.** The two models that recover in TS crash back to 0/3 in Go, where unused
-imports are compile errors. So the local ceiling depends heavily on your language — lowest
-for TS, highest for Rust and Go.
-
-**So hex doesn't bet on one model.** It runs best-of-N across a complementary pair and falls
-back to `claude -p` — your logged-in Claude CLI, no API key, no VRAM ceiling — for tasks the
-local models can't finish. The gate, not a classifier, picks the winner, so a mis-route only
-costs latency.
-
-If you have a frontier API or a logged-in `claude`, hex is strong. If you're strictly local
-on commodity hardware, hex works and inherits the local models' ceiling — and
-`hex bench agentic` tells you exactly where that is.
-
-## What is not proven
-
-Stated plainly, because the rest of this page is a list of things that are.
-
-**Localisation.** hex can repair unfamiliar code — 10/10 on the brownfield trial — but only
-when you tell it which file. Given just a failing test name it found the right file **once in
-ten**, and `hex do run` does not even accept that input. Finding the bug is the half that
-matters when you point a tool at a codebase, and it is the half that does not work. The next
-thing to build is a verb that takes a failing command and returns ranked candidate files,
-gated by actually repairing one.
-
-**Harder brownfield changes.** The trial used single-token bugs with the failing test named
-in the prompt. Multi-file changes, bugs that need intent understood across modules, and
-anything where the test does not name the concept are all untested.
-
-**`hex analyze` is blind to third-party imports in `domain/`.** Rule 1, which hex writes into
-every project it scaffolds, says *"domain imports only domain"*. The analyzer checks
-layer-to-layer imports and does not check that — so a project can `use tokio` inside its
-domain and still score A+. hex's headline rule is stricter than what hex enforces. Recorded
-in [`docs/analysis/2609120100-real-io-proof.md`](docs/analysis/2609120100-real-io-proof.md),
-unfixed.
-
-**The code generation is `claude -p`.** hex's contribution is the deterministic floor, the
-evidence gate, the architecture grade and the adversarial pass — not the writing. "hex built
-a URL shortener" is more precisely "Claude built it and hex proved it was hexagonal and
-green." That is not a weakness, but it changes what the claim is.
-
-## Architecture
-
-Eight crates, one binary, ~53k lines. Full detail in
-**[ARCHITECTURE.md](ARCHITECTURE.md)** — the living map, always describing HEAD.
-
-| Crate | Role |
-|---|---|
-| **hex-core** | The contract surface. Zero runtime dependencies |
-| **hex-infer** | Every inference adapter, the endpoint registry, tier resolution. The only place a provider or model may be named |
-| **hex-exec** | The agent loop, best-of-N, the `claude -p` delegate, the adversarial harness, guarded tools, the local store |
-| **hex-graph** | Code knowledge graph → `graph-out/graph.json` |
-| **hex-analysis** | Tree-sitter boundary checking + health detectors; powers `hex analyze` |
-| **hex-git** · **hex-parser** | git plumbing (libgit2) · parsing |
-| **hex-cli** | The binary, and the only composition root |
-
-All state is files: `~/.hex/*.jsonl`, `~/.hex/inference-servers.json`,
-`graph-out/graph.json`, `.hex/project.json`, `docs/`.
-
-**2026-08-24 — the `solo` epoch.**
-[ADR-2608241500](docs/adrs/ADR-2608241500-collapse-to-solo-software-engineering-agent.md)
-deleted the daemon, the SpacetimeDB coordination core, the dashboard, the second agent
-binary and the retired SOP pipeline: **~261k lines to ~53k, three processes to one.** What
-made the loop good — context assembly and evidence gates — was never in any of it.
+---
 
 ## Quick start
 
@@ -309,14 +191,23 @@ cargo build -p hex-cli --release
 hex bootstrap                       # prerequisites, inference server, config
 ```
 
-**Scaffold a project**
+**Scaffold**
 
 ```bash
-# just the floor — deterministic, runnable, carries its own rules
+# the floor alone — deterministic, runnable, carries its own rules
 hex init ./myapp --scaffold --lang rust
 
 # the floor plus what you described, gated on the build AND the grade
-hex scaffold "<what to build>" --target ./myapp --lang rust --grade A
+hex scaffold "A bookmark service: SQLite store, HTTP API, tag search" \
+  --target ./myapp --lang rust --grade A
+```
+
+```
+✓ 8 files (rust) — gate: cargo test
+✓ floor gate green: cargo test
+✓ 2 designs → 2 critiques → build GREEN
+✓ gate re-run: PASS — 27 test(s) ran
+✓ architecture grade: A+ — score 100/100 (floor A)
 ```
 
 **Grow it**
@@ -327,39 +218,115 @@ hex do run "<task>" --file <f> --evidence "<cmd>"
 hex harden <path> --gate "<cmd>"
 ```
 
+`hex do` edits, runs your command, and commits **only if it exits 0**. Otherwise the
+edit is reverted — a model that wanders commits nothing.
+
 **Keep it honest**
 
 ```bash
 hex analyze .                       # architecture grade + rule violations
-hex graph consumers <path>          # trace before you delete
-hex bench agentic                   # measure a model through the real loop
+hex graph consumers <path>          # who depends on this, before you delete it
 ```
 
-`hex --help` lists all 26 verbs. `hex go` suggests the next action.
-`hex hey <intent>` routes natural language to a verb.
-
-## Governance
-
-- **ADRs are an append-only ledger.** Decisions are never edited or deleted; a changed
-  decision gets a new ADR that supersedes the old one. Status changes only via
-  `hex adr accept|complete|supersede`.
-- **Epochs** group ADRs by design era: `foundation` → `org-sim` *(retired)* →
-  `single-agent` → `hybrid-inference` → **`solo`** *(current)*.
-- **[ARCHITECTURE.md](ARCHITECTURE.md) is the living map**; the ledger is its history. If
-  code or older docs contradict the map, the map wins — and the contradiction is worth an ADR.
-- **`founding-goals.md` is the one file agents may not touch.** Editing it needs a human
-  commit under CODEOWNERS; retiring a goal needs a Retirement-ADR as well. That rule is the
-  only thing separating "the agent decided the goal was obsolete" from "a human did".
-
-## Influences
-
-**`hex-graph`** is graphify-influenced — a GraphRAG-style code graph (typed nodes and edges,
-community detection, `EXTRACTED`/`INFERRED`/`AMBIGUOUS` confidence) reimplemented natively in
-Rust. The single-agent execution model converges with ideas from **OpenClaw** and **Hermes
-Agent** (Nous Research). These shaped the design; the implementation is hex's own.
+Rust, Go and TypeScript. `hex --help` lists all 26 verbs.
 
 ---
 
-*Day-to-day operating rules live in [CLAUDE.md](CLAUDE.md). Every claim on this page is
-checkable against the source, the [ADR ledger](docs/adrs/INDEX.md), `docs/analysis/`, or
-`docs/benchmarks/`.*
+## Does it work
+
+Six projects, each from a single sentence, every gate re-run independently from a
+clean build:
+
+| Project | Lang | Tests | |
+|---|---|---:|---|
+| [`linkstore-svc`](examples/linkstore-svc) | Rust | 27 | HTTP + SQLite + migration; **12 end-to-end** against a live port and a real file on disk |
+| [`game-2048-ts`](examples/game-2048-ts) | TS | 88 | |
+| [`url-shortener-rs`](examples/url-shortener-rs) | Rust | 39 | |
+| [`game-life-rs`](examples/game-life-rs) | Rust | 36 | |
+| [`ratelimiter-proof`](examples/ratelimiter-proof) | Rust | 18 | |
+| [`game-ttt-go`](examples/game-ttt-go) | Go | ✓ | |
+
+**The tests were falsified before being believed.** Breaking the HTTP status in
+`linkstore-svc` failed 4 tests; breaking a domain rule failed 3 more; restoring
+returned 27/0. A passing test proves nothing until you have watched it fail.
+
+**The second gate earned its keep there.** With a live database and a live listener,
+the shortcut is a use case reaching for the driver. It didn't:
+
+```
+src/usecases/  →  crate::domain, crate::ports, std::sync::Arc
+```
+
+**Adversarial review finds what tests miss.** `hex harden` read a comment on the rate
+limiter claiming `u128` cannot overflow on a product of two `u64`s. `Duration::as_nanos`
+returns a `u128`, the product overflows, a cast truncates it — a rate limiter that
+silently limits nothing. All 14 tests passed. A spec would not have caught it either,
+because the intent was correct; only an adversary reading the code finds it.
+
+**Changing code it did not write.** Against a 1,685-file project, ten single-token
+bugs injected into ten files: **10/10 repaired**, each restoring the original line
+exactly, zero test files edited.
+
+---
+
+## Limits
+
+**Localisation.** hex repairs unfamiliar code only when you tell it which file. Given
+just a failing test name it found the right file **once in ten**. Finding the bug is
+the half that matters when you point a tool at a codebase, and it is the half that
+does not work yet.
+
+**Third-party imports in `domain/`.** Rule 1 says domain imports only domain. The
+analyzer checks layer-to-layer edges and does not check that, so a project can pull a
+runtime into its domain and still score A+. The headline rule is stricter than what is
+enforced.
+
+**The code generation is a frontier model.** hex contributes the deterministic floor,
+the gates, the grade and the adversary — not the writing. It turns a capable model
+into a disciplined one; it does not replace it.
+
+**Local models have a ceiling, and it depends on your language.** The same task, per
+model, pass rate:
+
+| Model | Rust | TS | Go |
+|---|---|---|---|
+| devstral-small-2:24b | 5/5 | 3/3 | 2/3 |
+| gemma3:12b | 4/5 | 2/3 | 1/3 |
+| qwen2.5-coder:14b | 0/5 | **2/3** | 0/3 |
+| gpt-oss:20b | 0/5 | **1/3** | 0/3 |
+
+TypeScript is forgiving; Rust and Go are strict, and weaker models fall off a cliff in
+both. The top-of-the-leaderboard local model scored **last** on this grid — leaderboard
+rank does not predict agentic-loop performance. So hex runs best-of-N across a
+complementary pair and falls back to a frontier model, with the gate picking the
+winner. Measure your own with `hex bench agentic`.
+
+---
+
+## Architecture
+
+Eight crates, one binary, ~53k lines. No daemon, no database, nothing to start.
+
+| Crate | Role |
+|---|---|
+| **hex-core** | Contract surface. Zero runtime dependencies |
+| **hex-infer** | Inference adapters, endpoint registry, tier resolution. The only place a provider or model may be named |
+| **hex-exec** | The agent loop, best-of-N, the frontier delegate, the adversarial harness, guarded tools |
+| **hex-analysis** | Tree-sitter boundary checking and health detectors — the grader |
+| **hex-graph** | Code knowledge graph |
+| **hex-git** &middot; **hex-parser** | git plumbing &middot; parsing |
+| **hex-cli** | The binary, and the only composition root |
+
+hex obeys its own rules: **A+ / 100 / 0 boundary violations**, 977 tests.
+
+All state is files — `~/.hex/*.jsonl`, `.hex/project.json`, `graph-out/graph.json`.
+Full map in [ARCHITECTURE.md](ARCHITECTURE.md); decisions in the append-only
+[ADR ledger](docs/adrs/INDEX.md).
+
+---
+
+<p align="center">
+  <sub>Operating rules: <a href="CLAUDE.md">CLAUDE.md</a> &middot; Every number here is
+  reproducible from the gates in <code>examples/</code> and the reports in
+  <code>docs/analysis/</code>.</sub>
+</p>
