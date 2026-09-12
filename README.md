@@ -19,6 +19,7 @@
   <a href="#the-problem">The problem</a> &middot;
   <a href="#quick-start">Quick start</a> &middot;
   <a href="#why-hexagonal">Why hexagonal</a> &middot;
+  <a href="#why-rust-go-and-typescript">Why static languages</a> &middot;
   <a href="#evidence">Evidence</a> &middot;
   <a href="#limits">Limits</a>
 </p>
@@ -63,8 +64,6 @@ indistinguishable from a document that is wrong.
 
 A gate is executable, so it fails the moment it stops being true. That is the
 whole difference, and it is why hex has no spec step.
-
----
 
 ## Quick start
 
@@ -173,6 +172,28 @@ you a *dependency* is wrong, which is the thing that makes a codebase expensive
 to change. Because it is a graph property rather than a matter of taste, a
 number falls out of it. That number is what lets it be a gate instead of a
 suggestion.
+
+---
+
+## Why Rust, Go and TypeScript
+
+Because each has a compiler, and a compiler is a gate.
+
+The agent loop edits a file, compiles it, reads the error, and edits again.
+That loop is only as fast as the compiler and only as useful as what the
+compiler catches. In a statically typed language a wrong shape fails in
+seconds, at compile time, before any test runs. In a dynamic language the same
+mistake waits for a test that may not exist, and the first gate the agent meets
+is the one it wrote itself.
+
+Static analysis needs the same property. `hex analyze` walks the import graph.
+That graph is only knowable when imports are explicit and resolvable at build
+time. Duck typing and runtime module loading make the boundaries invisible to
+any tool, which means the second gate cannot exist.
+
+The cost is real and it is measured below. Strictness makes the gate stronger
+and the task harder. Weaker models fail Rust and Go where they pass TypeScript.
+That trade is the point. A gate a model cannot pass is doing its job.
 
 ---
 
