@@ -1,7 +1,7 @@
 # Brownfield: can hex change code it did not write?
 
 **Date:** 2026-09-12
-**Subject:** [`weave`](https://git.local/gary/weave) — 1,685 files, 549 TypeScript
+**Subject:** `weave` (a sibling project, not public) — 1,685 files, 549 TypeScript
 sources, 495 test files, 1,313 commits. Written by a different project entirely.
 **Method:** mutation repair, in a throwaway clone. Criteria fixed before the run.
 
