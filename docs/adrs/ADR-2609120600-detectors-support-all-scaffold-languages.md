@@ -158,10 +158,17 @@ their own and none excluded `examples/`, so hex's own display line said
 They now read `analyzer::source_files_sync`, the graded file list with the
 same exclusions as the grade. `orphan` is rebuilt on exports, identifier
 counts and trait member lists (`AstPort::extract_members`) and holds in all
-three languages: an orphan port is a ports type no adapter file names or
-implements by method set (Go implements structurally); an orphan adapter is
-a type in an adapters file that names a port when nothing outside adapters
-names anything the file exports but its methods. The old detector decided
+three languages: an orphan port is a trait or interface exported from
+`ports/` that no adapter file names or implements by method set (Go
+implements structurally); a struct in `ports/` is a value type, never a
+contract. An orphan adapter is a type in an adapters file that names a
+port when no other file names anything the file exports but its methods;
+a sibling adapter file counts, because a connection pool used by the
+SQLite store is wired even though the composition root never names it.
+Both of those refinements came from running the detector on the evidence
+examples after it landed: `url-shortener-rs` reported two DTOs as orphan
+ports and `linkstore-svc` reported its pool and reader guard as orphan
+adapters. The old detector decided
 "wired" by a list of composition-root file names that did not include
 `lib.rs`, so every fresh Rust scaffold reported one orphan adapter. Six
 fixtures in `hex-analysis/tests/orphan_per_language.rs`. `cohesion`,
@@ -170,11 +177,16 @@ tree with source files and no `.rs`, each returns `not_applicable` and the
 CLI prints `n/a` with the reason, held by
 `hex-analysis/tests/rust_only_detectors_declare_language.rs`. `duplication`
 also stops treating `Default`, `Display` and `TryFrom` as ports; only traits
-declared in the tree are.
+declared in the tree are, and a blanket impl on `Arc<T>` or `Box<T>` is a
+forwarder, not a second adapter.
 
 **State after step 5.** The three fresh scaffolds report zero findings from
 every detector that reads their language, and `n/a` from the three that do
-not. hex's own tree: A+ 100 over 277 files, every score component zero,
+not. The six evidence examples in the README hold their grades under the
+new detectors: A+ 100 each, every score component zero, and no display
+finding. The examples did not need regenerating; they are fixed code and
+the gates are commands that run against them. What needed re-running was
+the measurement, because the detectors changed. hex's own tree: A+ 100 over 277 files, every score component zero,
 `dead layers` 0, `orphans` 0, `duplication` 13 (the `Tool` implementations
 in `hex-exec/src/tools`, which do share shape). Rebuilding `cohesion`,
 `duplication` and `god_types` for Go and TypeScript is not planned; each

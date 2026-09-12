@@ -120,6 +120,9 @@ fn analyze_with_threshold(
     // hex's own duplication count.
     let declared: std::collections::HashSet<String> = declared_traits(root);
     impls.retain(|b| declared.contains(&b.port));
+    // A blanket impl on a std wrapper (`impl<T: Clock> Clock for Arc<T>`)
+    // forwards; it is not a second adapter with a body to compare.
+    impls.retain(|b| !matches!(b.adapter.as_str(), "Arc" | "Box" | "Rc" | "Mutex" | "RwLock" | "RefCell"));
 
     // Group by port name; only same-port pairs are candidates for
     // "two adapters doing the same thing behind one contract".

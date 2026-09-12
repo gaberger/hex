@@ -1,10 +1,14 @@
 //! Orphan-adapter and orphan-port detectors.
 //!
-//! - **Orphan port**: a type exported from a `ports/` file that no adapter
-//!   file names. The contract has no adapter behind it.
+//! - **Orphan port**: a trait or interface exported from a `ports/` file
+//!   that no adapter file names or implements by method set. The contract
+//!   has no adapter behind it. A struct in `ports/` is a value type, not a
+//!   contract, and is never an orphan port.
 //! - **Orphan adapter**: a type exported from an `adapters/` file that names
-//!   a port, when nothing outside `adapters/` names anything the file
-//!   exports. The adapter exists and nothing wires it.
+//!   a port, when no other file names anything the file exports (its
+//!   methods aside). The adapter exists and nothing wires it. A sibling
+//!   adapter file counts: a connection pool used by the SQLite store is not
+//!   an orphan because the composition root never names it.
 //!
 //! Both read the shared per-file model (`exports` and identifier counts from
 //! the tree-sitter adapter), so they hold for Rust, Go and TypeScript alike.
@@ -17,7 +21,7 @@
 //! include `lib.rs`, so every fresh Rust scaffold reported one orphan
 //! adapter. It also walked `examples/`. (ADR-2609120600, step 5.)
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -84,15 +88,20 @@ fn analyze_files(files: &[FileData], opts: OrphanOptions) -> OrphanReport {
         .map(|e| e.name.as_str())
         .collect();
 
-    // What adapter files name, and what non-adapter files name.
+    // What adapter files name, and which files name each name.
     let mut named_by_adapters: HashSet<&str> = HashSet::new();
-    let mut named_outside_adapters: HashSet<&str> = HashSet::new();
+    let mut named_in: HashMap<&str, Vec<&str>> = HashMap::new();
     for f in files {
-        let into = if is_adapters_file(&f.path) { &mut named_by_adapters } else { &mut named_outside_adapters };
         for name in f.references.keys() {
-            into.insert(name.as_str());
+            if is_adapters_file(&f.path) {
+                named_by_adapters.insert(name.as_str());
+            }
+            named_in.entry(name.as_str()).or_default().push(f.path.as_str());
         }
     }
+    let named_by_another_file = |name: &str, own: &str| -> bool {
+        named_in.get(name).is_some_and(|fs| fs.iter().any(|f| *f != own))
+    };
 
     // Method sets exported per adapter file. A Go type implements an
     // interface by having its methods and never names it.
@@ -112,7 +121,9 @@ fn analyze_files(files: &[FileData], opts: OrphanOptions) -> OrphanReport {
 
     if opts.orphan_ports {
         for f in files.iter().filter(|f| is_ports_file(&f.path)) {
-            for e in f.exports.iter().filter(|e| e.kind == ExportKind::Type) {
+            // Only a trait or interface is a contract. The member map has an
+            // entry for each one the file declares, empty or not.
+            for e in f.exports.iter().filter(|e| e.kind == ExportKind::Type && f.members.contains_key(&e.name)) {
                 if !named_by_adapters.contains(e.name.as_str()) && !implemented_structurally(f, &e.name) {
                     report.findings.push(OrphanFinding {
                         kind: "orphan_port".to_string(),
@@ -149,14 +160,14 @@ fn analyze_files(files: &[FileData], opts: OrphanOptions) -> OrphanReport {
             if ports_named.is_empty() {
                 continue;
             }
-            // Wired when anything the file exports is named outside adapters:
-            // the type itself, or a constructor like `NewMemoryStore`. Not a
+            // Wired when another file names anything this one exports: the
+            // type itself, or a constructor like `NewMemoryStore`. Not a
             // method: `Load` is named by every caller of every store.
             let wired = f
                 .exports
                 .iter()
                 .filter(|e| e.kind != ExportKind::Method)
-                .any(|e| named_outside_adapters.contains(e.name.as_str()));
+                .any(|e| named_by_another_file(&e.name, &f.path));
             if wired {
                 continue;
             }
@@ -180,9 +191,13 @@ fn analyze_files(files: &[FileData], opts: OrphanOptions) -> OrphanReport {
 mod tests {
     use super::*;
     use crate::domain::ExportDeclaration;
-    use std::collections::HashMap;
 
     fn file(path: &str, exports: &[(&str, ExportKind)], names: &[&str]) -> FileData {
+        let members = exports
+            .iter()
+            .filter(|(n, k)| *k == ExportKind::Type && n.ends_with("Port"))
+            .map(|(n, _)| (n.to_string(), vec![]))
+            .collect();
         FileData {
             path: path.to_string(),
             imports: vec![],
@@ -198,8 +213,32 @@ mod tests {
                 })
                 .collect(),
             references: names.iter().map(|n| (n.to_string(), 1)).collect::<HashMap<_, _>>(),
-            members: HashMap::new(),
+            members,
         }
+    }
+
+    #[test]
+    fn a_value_type_declared_in_ports_is_not_a_contract() {
+        // `pub struct Row` in ports/ is a DTO. No adapter implements a struct.
+        let files = vec![
+            file("src/ports/store.rs", &[("Row", ExportKind::Type), ("StorePort", ExportKind::Type)], &["Row", "StorePort"]),
+            file("src/adapters/sqlite.rs", &[("Sqlite", ExportKind::Type)], &["StorePort", "Sqlite"]),
+            file("src/lib.rs", &[], &["Sqlite"]),
+        ];
+        assert!(analyze_files(&files, ALL).findings.is_empty());
+    }
+
+    #[test]
+    fn an_adapter_helper_used_by_a_sibling_adapter_is_wired() {
+        // linkstore-svc: ConnectionPool is used by SqliteStore, never by lib.rs.
+        let files = vec![
+            file("src/ports/store.rs", &[("StorePort", ExportKind::Type), ("StoreError", ExportKind::Type)], &["StorePort", "StoreError"]),
+            file("src/adapters/secondary/pool.rs", &[("ConnectionPool", ExportKind::Type)], &["StoreError", "ConnectionPool"]),
+            file("src/adapters/secondary/store.rs", &[("SqliteStore", ExportKind::Type)], &["StorePort", "ConnectionPool", "SqliteStore"]),
+            file("src/lib.rs", &[], &["SqliteStore"]),
+        ];
+        let r = analyze_files(&files, ALL);
+        assert!(r.findings.is_empty(), "{:?}", r.findings);
     }
 
     #[test]
@@ -248,11 +287,11 @@ mod tests {
     fn an_adapter_wired_through_its_constructor_is_not_an_orphan() {
         // Go: composition calls secondary.NewMemoryStore(); the type is never named.
         let files = vec![
-            file("internal/ports/store.go", &[("Store", ExportKind::Type)], &["Store"]),
+            file("internal/ports/store.go", &[("StorePort", ExportKind::Type)], &["StorePort"]),
             file(
                 "adapters/secondary/memory.go",
                 &[("MemoryStore", ExportKind::Type), ("NewMemoryStore", ExportKind::Function)],
-                &["Store", "MemoryStore", "NewMemoryStore", "ports"],
+                &["StorePort", "MemoryStore", "NewMemoryStore", "ports"],
             ),
             file("composition-root.go", &[], &["NewMemoryStore", "secondary"]),
         ];
@@ -262,7 +301,7 @@ mod tests {
     #[test]
     fn a_type_in_adapters_that_names_no_port_is_not_an_adapter() {
         let files = vec![
-            file("src/ports/p.rs", &[("Quux", ExportKind::Type)], &["Quux"]),
+            file("src/ports/p.rs", &[("QuuxPort", ExportKind::Type)], &["QuuxPort"]),
             file("src/adapters/inherent.rs", &[("Lonely", ExportKind::Type)], &["Lonely", "Self"]),
         ];
         let r = analyze_files(&files, ALL);
