@@ -6,7 +6,7 @@
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-edition%202021-dea584?style=flat-square&logo=rust&logoColor=white" alt="Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
   <a href="docs/adrs/INDEX.md"><img src="https://img.shields.io/badge/ADRs-264-bc8cff?style=flat-square" alt="ADRs"></a>
-  <img src="https://img.shields.io/badge/tests-973-3fb950?style=flat-square" alt="973 tests">
+  <img src="https://img.shields.io/badge/tests-977-3fb950?style=flat-square" alt="973 tests">
   <img src="https://img.shields.io/badge/self--grade-A%2B%20100%2F100-3fb950?style=flat-square" alt="A+ 100/100">
   <a href="#what-is-not-proven"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="Alpha"></a>
 </p>
@@ -124,6 +124,23 @@ A passing test proves nothing until it can fail. For `linkstore-svc`:
 | Domain stops stripping tracking parameters | **3 tests failed** |
 | Restored | **27 passed, 0 failed** |
 
+### And one codebase hex did not write
+
+Six greenfield projects prove hex can *build*. They say nothing about whether it
+can change code someone else wrote. So: [`weave`](docs/analysis/2609120300-brownfield-trial.md)
+— 1,685 files, 495 test files, a different project entirely. Ten realistic
+single-token bugs injected into ten files, each verified to break a real test first.
+
+| | Result |
+|---|---:|
+| **Repair**, given the file and the failing test | **10/10** — every one restoring the original line exactly, **0** test files edited |
+| **Localisation**, given only the failing test name | **1/10** — and 0/10 in the top three |
+
+Read those two numbers separately. The first is the easy half: a frontier model
+told which file and which test will find a `>` that should be `>=`. The second is
+what "point it at a codebase" actually means, and **`hex do run` requires
+`--file`** — no verb accepts "this test fails, find why."
+
 ## Hexagonal architecture, enforced
 
 hex writes ports-and-adapters code and grades it. `hex analyze` is the grader, and **hex
@@ -165,6 +182,13 @@ That last one is the lesson committed by the code that reports the lesson. It is
 mode this project takes most seriously: **a gate that fails — or passes — for a reason
 unrelated to what it gates is indistinguishable from the truth.**
 
+The brownfield trial found the worst instance of it. In a fresh clone with no
+`git config user.email` — the default state of any clone or CI box — hex made a
+correct fix, watched its gate pass with 9 tests green, failed to `git commit`,
+**reverted the fix**, and reported *"did not pass evidence"*. It destroyed correct
+work and blamed the tests. All three commit paths had it; two reverted. Fixed, and
+the change is now kept and unstaged with a message naming the half that failed.
+
 ## Local models: the honest picture
 
 hex is model-agnostic (Ollama, vLLM, OpenAI-compatible, Claude). But the *agentic loop* —
@@ -202,9 +226,16 @@ on commodity hardware, hex works and inherits the local models' ceiling — and
 
 Two things, stated plainly because the rest of this page is a list of things that are.
 
-**Brownfield.** All six projects above are greenfield. hex has never been pointed at a large
-codebase someone else wrote and asked to change it safely. The evidence gate protects a
-change; nothing has tested whether hex can find the *right* change in code it did not write.
+**Localisation.** hex can repair unfamiliar code — 10/10 on the brownfield trial — but only
+when you tell it which file. Given just a failing test name it found the right file **once in
+ten**, and `hex do run` does not even accept that input. Finding the bug is the half that
+matters when you point a tool at a codebase, and it is the half that does not work. The next
+thing to build is a verb that takes a failing command and returns ranked candidate files,
+gated by actually repairing one.
+
+**Harder brownfield changes.** The trial used single-token bugs with the failing test named
+in the prompt. Multi-file changes, bugs that need intent understood across modules, and
+anything where the test does not name the concept are all untested.
 
 **`hex analyze` is blind to third-party imports in `domain/`.** Rule 1, which hex writes into
 every project it scaffolds, says *"domain imports only domain"*. The analyzer checks
