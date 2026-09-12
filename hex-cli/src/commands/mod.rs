@@ -15,6 +15,7 @@ pub mod interview;
 pub mod memory;
 pub mod plan;
 pub mod refresh;
+pub mod scaffold;
 pub mod skill;
 pub mod status;
 pub mod build;

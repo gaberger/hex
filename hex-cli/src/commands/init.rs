@@ -417,7 +417,7 @@ pub fn scaffold_gate(lang: &str) -> Option<&'static str> {
 ///
 /// Existing files are never overwritten, so re-running `hex init --scaffold`
 /// on a live project is safe.
-fn create_scaffold(target: &Path, lang: &str, project_name: &str) -> Result<()> {
+pub(crate) fn create_scaffold(target: &Path, lang: &str, project_name: &str) -> Result<()> {
     let Some(gate) = scaffold_gate(lang) else {
         anyhow::bail!(
             "unknown --lang '{}'; expected one of: {}",
@@ -557,7 +557,7 @@ mod scaffold_tests {
     }
 }
 
-fn create_adr_rules_toml(target: &Path) -> Result<()> {
+pub(crate) fn create_adr_rules_toml(target: &Path) -> Result<()> {
     let hex_dir = target.join(".hex");
     create_dir_if_missing(&hex_dir)?;
 

@@ -276,13 +276,13 @@ pub async fn run(
             let v = all_violation_count as u64;
             if v == 0 { 100 } else { 100u64.saturating_sub(v * 10) }
         });
-        let (letter, score_colored) = match score {
-            95..=100 => ("A+", format!("{}", score).bright_green().to_string()),
-            90..=94  => ("A",  format!("{}", score).green().to_string()),
-            80..=89  => ("B",  format!("{}", score).yellow().to_string()),
-            70..=79  => ("C",  format!("{}", score).yellow().to_string()),
-            60..=69  => ("D",  format!("{}", score).red().to_string()),
-            _        => ("F",  format!("{}", score).bright_red().to_string()),
+        let letter = grade_letter(score);
+        let score_colored = match score {
+            95..=100 => format!("{}", score).bright_green().to_string(),
+            90..=94 => format!("{}", score).green().to_string(),
+            80..=89 | 70..=79 => format!("{}", score).yellow().to_string(),
+            60..=69 => format!("{}", score).red().to_string(),
+            _ => format!("{}", score).bright_red().to_string(),
         };
 
         println!();
@@ -433,7 +433,7 @@ fn health_findings(root: &Path) -> Vec<(&'static str, usize)> {
 /// `hex-analysis` is the crate that enforces the hexagonal rules this tool
 /// sells. Until now only the daemon depended on it, so deleting the daemon
 /// would have orphaned it and broken the verb P9.2 is measured on.
-async fn deep_analysis(
+pub async fn deep_analysis(
     root: &Path,
 ) -> Result<hex_analysis::domain::ArchAnalysisResult, hex_analysis::ports::AnalysisError> {
     use hex_analysis::ports::ArchAnalysisPort;
@@ -1480,6 +1480,58 @@ fn check_adr_compliance(root: &Path) -> AdrCompliance {
     }
 
     AdrCompliance::ran(violations)
+}
+
+/// The letter for a 0..100 architecture score.
+///
+/// One table. `hex scaffold` gates on this and `hex analyze` prints it, and a
+/// verb that gates on a different table than the one the user is shown is a
+/// gate nobody can check.
+pub fn grade_letter(score: u64) -> &'static str {
+    match score {
+        95..=100 => "A+",
+        90..=94 => "A",
+        80..=89 => "B",
+        70..=79 => "C",
+        60..=69 => "D",
+        _ => "F",
+    }
+}
+
+/// Rank a letter so grades can be compared. Higher is better.
+pub fn grade_rank(letter: &str) -> u8 {
+    match letter {
+        "A+" => 5,
+        "A" => 4,
+        "B" => 3,
+        "C" => 2,
+        "D" => 1,
+        _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod grade_tests {
+    use super::{grade_letter, grade_rank};
+
+    #[test]
+    fn every_band_maps_to_a_letter_and_the_letters_are_ordered() {
+        let mut previous = 0u8;
+        for score in 0..=100u64 {
+            let rank = grade_rank(grade_letter(score));
+            assert!(rank >= previous, "grade fell at score {score}");
+            previous = rank;
+        }
+        assert_eq!(grade_letter(100), "A+");
+        assert_eq!(grade_letter(94), "A");
+        assert_eq!(grade_letter(0), "F");
+    }
+
+    #[test]
+    fn an_unknown_letter_ranks_lowest_rather_than_passing_a_gate() {
+        assert_eq!(grade_rank("Z"), 0);
+        assert_eq!(grade_rank(""), 0);
+    }
 }
 
 /// JSON output mode for `hex analyze --json`.

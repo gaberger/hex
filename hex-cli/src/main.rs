@@ -166,6 +166,8 @@ enum Commands {
         #[command(subcommand)]
         action: commands::bench::BenchAction,
     },
+    /// Scaffold a described project onto a deterministic hexagonal skeleton, via the frontier path, gated on the build AND the architecture grade
+    Scaffold(commands::scaffold::ScaffoldArgs),
     /// Cooperative build — diverge, red-team, synthesize, then build to a gate
     Build(commands::build::BuildArgs),
     /// Adversarial pass — hunt a target for bugs, verify each, fix under a gate
@@ -374,6 +376,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Do { action } => commands::direct::run(action).await,
         Commands::Bench { action } => commands::bench::run(action).await,
+        Commands::Scaffold(args) => commands::scaffold::run(args).await,
         Commands::Build(args) => commands::build::run_build(args).await,
         Commands::Harden(args) => commands::build::run_harden(args).await,
         Commands::Insight { action } => commands::insight::run(action).await,
