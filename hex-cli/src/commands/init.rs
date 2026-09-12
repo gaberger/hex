@@ -225,6 +225,9 @@ fn create_project_json(target: &Path, name: &str) -> Result<()> {
         "createdAt": now,
         "hexVersion": env!("CARGO_PKG_VERSION"),
         "lifecycle_enforcement": "mandatory",
+        // Paths `hex analyze` skips, relative to the project root. Vendored
+        // code, generated output and template data go here, not in the tool.
+        "analyze": { "exclude": [] },
     });
 
     fs::write(&project_json, serde_json::to_string_pretty(&content)?)

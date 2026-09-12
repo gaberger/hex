@@ -293,7 +293,9 @@ Measure your own with `hex bench agentic`.
 ## Architecture
 
 Eight crates, one binary, about 54k lines. hex obeys its own rules: **A+, 100 of
-100, zero boundary violations** on its own analyzer. The map is in
+100, zero boundary violations** on its own analyzer, over all eight crates. The
+only paths it excludes are its embedded scaffold templates, and it declares
+that in `.hex/project.json` like any other project would. The map is in
 [ARCHITECTURE.md](ARCHITECTURE.md). The decisions are in the append-only
 [ADR ledger](docs/adrs/INDEX.md).
 

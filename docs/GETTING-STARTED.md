@@ -83,6 +83,17 @@ hex graph build .            # build the code graph
 hex graph consumers <path>   # who depends on this, before you delete it
 ```
 
+The scan covers every source file under the project. Vendored code, generated
+output and template data go in `analyze.exclude` in `.hex/project.json`, as
+paths relative to the project root:
+
+```json
+{ "analyze": { "exclude": ["vendor", "gen"] } }
+```
+
+The analyzer has no built-in list of directory names to skip. What a project
+excludes is the project's decision, and it is visible in the project's config.
+
 ## Read next
 
 | Document | Covers |

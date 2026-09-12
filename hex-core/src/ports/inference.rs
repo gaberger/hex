@@ -10,11 +10,6 @@ use serde::{Deserialize, Serialize};
 use crate::domain::messages::{ContentBlock, StopReason};
 use crate::domain::tools::ToolDefinition;
 
-/// Pure in-memory mock implementation of [`IInferencePort`]. Used by the
-/// standalone composition tests (ADR-2026-04-11-2000 P2/P5). Left unconditionally
-/// `pub` because hex-core has no cargo features and downstream test code in
-/// hex-nexus/hex-cli imports it directly.
-pub mod mock;
 
 /// A request to an inference engine.
 #[derive(Debug, Clone)]

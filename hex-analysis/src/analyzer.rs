@@ -30,17 +30,18 @@ const EXCLUDE_PATTERNS: &[&str] = &[
     "node_modules",
     "dist",
     "examples",
+    // Tool configuration is consumed by the tool, not imported by code. Its
+    // default export read as dead on every project that has one.
+    ".config.ts",
+    ".config.js",
+    ".config.mjs",
+    ".config.cjs",
     ".test.ts",
     ".spec.ts",
     "_test.go",
     ".test.rs",
     "tests/",
     "target/",
-    "hex-core/",
-    "hex-cli/",
-    "hex-nexus/",
-    "hex-agent/",
-    "hex-desktop/",
 ];
 
 fn matches_exclude(file_path: &str, patterns: &[&str]) -> bool {
@@ -51,6 +52,39 @@ fn matches_exclude(file_path: &str, patterns: &[&str]) -> bool {
             file_path.contains(p)
         }
     })
+}
+
+/// Project-declared exclusions from `.hex/project.json`:
+///
+/// ```json
+/// { "analyze": { "exclude": ["hex-cli/assets/scaffold"] } }
+/// ```
+///
+/// This exists so a project can keep embedded template data, vendored code or
+/// generated output out of its own grade without that project's directory
+/// names being written into the analyzer. The analyzer used to carry
+/// `hex-core/`, `hex-cli/` and three deleted crate names in its exclusion
+/// list, which meant hex graded itself over six of eight crates and a
+/// violation planted in hex-core was invisible. Names belong in the
+/// project's config, not in the tool.
+fn project_excludes(root: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(root.join(".hex").join("project.json")) else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    v.get("analyze")
+        .and_then(|a| a.get("exclude"))
+        .and_then(|e| e.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str())
+                .map(|s| s.trim_matches('/').to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn is_source_file(path: &str) -> bool {
@@ -78,6 +112,8 @@ async fn detect_go_module_prefix(root: &Path) -> Option<String> {
 async fn collect_source_files(root: &Path) -> Result<Vec<String>, AnalysisError> {
     let mut files = Vec::new();
     let mut stack = vec![root.to_path_buf()];
+    let project_ex_owned = project_excludes(root);
+    let project_ex: Vec<&str> = project_ex_owned.iter().map(String::as_str).collect();
 
     while let Some(dir) = stack.pop() {
         let mut entries = tokio::fs::read_dir(&dir).await?;
@@ -91,10 +127,13 @@ async fn collect_source_files(root: &Path) -> Result<Vec<String>, AnalysisError>
 
             if path.is_dir() {
                 // Skip excluded directories
-                if !matches_exclude(&rel, EXCLUDE_PATTERNS) {
+                if !matches_exclude(&rel, EXCLUDE_PATTERNS) && !matches_exclude(&rel, &project_ex) {
                     stack.push(path);
                 }
-            } else if is_source_file(&rel) && !matches_exclude(&rel, EXCLUDE_PATTERNS) {
+            } else if is_source_file(&rel)
+                && !matches_exclude(&rel, EXCLUDE_PATTERNS)
+                && !matches_exclude(&rel, &project_ex)
+            {
                 files.push(rel);
             }
         }

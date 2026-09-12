@@ -370,3 +370,72 @@ fn exit_code_ignores_adr_warnings_and_strict_does_not() {
     let with_error = run(&["--exit-code"]);
     assert!(!with_error.status.success(), "--exit-code passed with an ADR error present");
 }
+
+/// Every crate in this workspace is inside its own grade.
+///
+/// The analyzer's exclusion list carried `hex-core/`, `hex-cli/` and three
+/// deleted crate names. hex graded itself over six of eight crates and told
+/// every reader it scored A+ 100. A violation planted in hex-core was
+/// invisible. This test plants one in each crate that has a `src/` and
+/// asserts the analyzer names it.
+///
+/// It runs on a copy, never on the checkout.
+#[test]
+fn a_violation_planted_in_any_crate_is_seen() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let crates: Vec<String> = std::fs::read_dir(root)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with("hex-") && root.join(n).join("src").is_dir())
+        .collect();
+    assert!(crates.len() >= 6, "found only {} crates; the walker is broken", crates.len());
+
+    for krate in &crates {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let copy = dir.path().join("ws");
+        // Only what the analyzer needs: the crate's src and the workspace config.
+        std::fs::create_dir_all(copy.join(krate)).unwrap();
+        copy_tree(&root.join(krate).join("src"), &copy.join(krate).join("src"));
+        std::fs::copy(root.join("Cargo.toml"), copy.join("Cargo.toml")).unwrap();
+        if root.join(".hex/project.json").is_file() {
+            std::fs::create_dir_all(copy.join(".hex")).unwrap();
+            std::fs::copy(root.join(".hex/project.json"), copy.join(".hex/project.json")).unwrap();
+        }
+        // The plant: a file under this crate's src/ that imports an adapter
+        // from a domain path, which is a boundary violation in every layout.
+        let plant = copy.join(krate).join("src/domain");
+        std::fs::create_dir_all(&plant).unwrap();
+        std::fs::write(plant.join("zz_planted.rs"), "use crate::adapters::secondary::x::Y;\n").unwrap();
+
+        let out = Command::new(hex_bin())
+            .args(["analyze", ".", "--exit-code"])
+            .current_dir(&copy)
+            .output()
+            .expect("run hex analyze");
+        let text = String::from_utf8_lossy(&out.stdout);
+        // Both halves are required. A run that exits 1 for some other reason
+        // and a run that names the file but exits 0 are each a broken gate.
+        assert!(
+            text.contains("zz_planted"),
+            "{krate}: the analyzer did not name the planted file:\n{text}"
+        );
+        assert!(
+            !out.status.success(),
+            "{krate}: the analyzer named the planted file but exited 0:\n{text}"
+        );
+    }
+}
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap().flatten() {
+        let p = e.path();
+        let dest = to.join(e.file_name());
+        if p.is_dir() {
+            copy_tree(&p, &dest);
+        } else {
+            std::fs::copy(&p, &dest).unwrap();
+        }
+    }
+}

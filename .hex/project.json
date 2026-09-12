@@ -28,5 +28,10 @@
     "project_path": "examples/ebay-clone/backend",
     "max_iterations": 20,
     "top_k_files": 3
+  },
+  "analyze": {
+    "exclude": [
+      "hex-cli/assets/scaffold"
+    ]
   }
 }

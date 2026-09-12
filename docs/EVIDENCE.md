@@ -71,7 +71,19 @@ penalty wrapped in a `u8`.
 hex analyze .
 ```
 
-Expected: `Architecture grade: A+ — score 100/100`, `0 boundary violations`.
+Expected: `Architecture grade: A+ — score 100/100`, `0 boundary violations`, and
+`score_components` all zero in `hex analyze . --json`.
+
+The scan covers every crate. The analyzer has no built-in knowledge of hex's
+directory names. The one path hex excludes is `hex-cli/assets/scaffold`, the
+template files compiled into the binary, and it declares that in
+`.hex/project.json` under `analyze.exclude`, the same way any project would.
+
+`hex-cli/tests/scaffold_is_executable.rs::a_violation_planted_in_any_crate_is_seen`
+copies each crate, plants a domain-imports-adapter violation in it, and asserts
+the analyzer names the file and exits 1. This exists because an earlier build of
+the analyzer excluded `hex-core/` and `hex-cli/` by name, so hex graded itself
+over six of eight crates and reported A+.
 
 ## A commit failure does not delete the work
 
