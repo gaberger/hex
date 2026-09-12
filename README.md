@@ -37,12 +37,12 @@ after that is harder still.
 
 ```mermaid
 flowchart LR
-    A[describe the feature] --> B[agent writes code]
-    B --> C{tests pass?}
-    C -->|no| B
-    C -->|yes| D[ship]
-    D -.-> E[shape drifts, silently]
-    E -.-> F[week 12: nothing is<br/>where it belongs]
+    A["describe the feature"] --> B["agent writes code"]
+    B --> C{"tests pass?"}
+    C -->|"no"| B
+    C -->|"yes"| D["ship"]
+    D -.-> E["shape drifts, silently"]
+    E -.-> F["week 12, nothing is<br/>where it belongs"]
 
     style C fill:#2d333b,stroke:#539bf5,color:#adbac7
     style E fill:#2d333b,stroke:#c69026,color:#adbac7
@@ -66,20 +66,14 @@ from a document that is wrong, and you cannot tell which one you are holding.
 
 ```mermaid
 flowchart LR
-    subgraph S["spec-driven"]
-        direction TB
-        S1["spec: prose"] -. "no link that<br/>can break" .-> S2["code"]
-        S2 --> S3["tests pass"]
-        S1 -.-> S4["spec silently stops<br/>being true"]
-    end
+    S1["SPEC-DRIVEN<br/>spec is prose"] -.-> S2["code"]
+    S2 --> S3["tests pass"]
+    S1 -.-> S4["spec silently stops<br/>being true"]
 
-    subgraph G["gate-driven"]
-        direction TB
-        G1["gate: a command<br/>that must exit 0"] ==> G2["code"]
-        G2 ==> G3{"run the gate"}
-        G3 -->|"exit 0"| G4["commit"]
-        G3 -->|"nonzero"| G5["revert"]
-    end
+    G1["GATE-DRIVEN<br/>a command that<br/>must exit 0"] ==> G2["code"]
+    G2 ==> G3{"run the gate"}
+    G3 -->|"exit 0"| G4["commit"]
+    G3 -->|"nonzero"| G5["revert"]
 
     style S4 fill:#2d333b,stroke:#e5534b,color:#adbac7
     style G1 fill:#2d333b,stroke:#57ab5a,color:#adbac7
@@ -98,15 +92,15 @@ Two gates, because they answer different questions.
 
 ```mermaid
 flowchart TB
-    A["hex scaffold 'what to build'"] --> B["1. floor<br/>deterministic skeleton from<br/>templates in the binary"]
+    A["hex scaffold"] --> B["1. FLOOR<br/>deterministic skeleton from<br/>templates in the binary"]
     B --> C{"floor gate<br/>does the skeleton run<br/>on this machine?"}
-    C -->|no| X["stop, before spending<br/>a model call"]
-    C -->|yes| D["2. build<br/>N designs, each red-teamed,<br/>then built to the gate"]
+    C -->|"no"| X["stop, before spending<br/>a model call"]
+    C -->|"yes"| D["2. BUILD<br/>N designs, each red-teamed,<br/>then built to the gate"]
     D --> E{"gate<br/>does it run?"}
-    E -->|no| Y["fail"]
-    E -->|yes| F{"architecture grade<br/>is it the right shape?"}
+    E -->|"no"| Y["fail"]
+    E -->|"yes"| F{"architecture grade<br/>is it the right shape?"}
     F -->|"below floor"| Y
-    F -->|"A or better"| G["3. ship<br/>with rules that travel<br/>with the project"]
+    F -->|"A or better"| G["3. SHIP<br/>with rules that travel<br/>with the project"]
 
     style C fill:#2d333b,stroke:#539bf5,color:#adbac7
     style E fill:#2d333b,stroke:#539bf5,color:#adbac7
@@ -139,8 +133,8 @@ separation of concerns" cannot be graded. This can:
 
 ```mermaid
 flowchart TB
-    PA["adapters/primary<br/>HTTP · CLI · UI"]
-    SA["adapters/secondary<br/>database · files · APIs"]
+    PA["adapters/primary<br/>HTTP, CLI, UI"]
+    SA["adapters/secondary<br/>database, files, APIs"]
     U["usecases<br/>orchestration"]
     P["ports<br/>interfaces"]
     D["domain<br/>pure logic, imports nothing"]

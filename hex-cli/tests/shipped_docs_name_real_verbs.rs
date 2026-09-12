@@ -356,8 +356,75 @@ fn mermaid_labels_contain_no_html_github_will_not_render() {
 
     assert!(
         blocks_seen >= 5,
-        "only found {blocks_seen} mermaid blocks — the extractor is broken, so this \
+        "only found {blocks_seen} mermaid blocks. The extractor is broken, so this \
          test would pass without checking anything"
     );
+    assert!(problems.is_empty(), "{}", problems.join("\n  "));
+}
+
+/// Diagram labels must be quoted and ASCII.
+///
+/// GitHub's mermaid is stricter than `mermaid-cli`, and the two failures that
+/// actually shipped were not the HTML one. An unquoted label containing a colon
+/// breaks the parser, and a non-ASCII character inside a label can too. Both
+/// rendered locally and neither drew on GitHub.
+///
+/// Quoting every label removes the whole class, so that is what is checked:
+/// not "is this particular character safe", but "is every label quoted and
+/// plain". Subgraphs are refused for the same reason. They add a parser mode
+/// that buys nothing a plain flowchart cannot express.
+#[test]
+fn mermaid_labels_are_quoted_ascii_and_subgraph_free() {
+    let docs: &[(&str, &str)] = &[
+        ("README.md", include_str!("../../README.md")),
+        ("ARCHITECTURE.md", include_str!("../../ARCHITECTURE.md")),
+    ];
+
+    let mut blocks_seen = 0usize;
+    let mut problems: Vec<String> = Vec::new();
+
+    for (name, body) in docs {
+        let mut rest = *body;
+        while let Some(open) = rest.find("```mermaid") {
+            let after = &rest[open + "```mermaid".len()..];
+            let Some(close) = after.find("```") else { break };
+            let block = &after[..close];
+            blocks_seen += 1;
+
+            for (n, line) in block.lines().enumerate() {
+                let n = n + 1;
+                if let Some(c) = line.chars().find(|c| !c.is_ascii()) {
+                    problems.push(format!(
+                        "{name} block {blocks_seen} line {n}: non-ASCII {c:?}.                          GitHub's parser can reject it; use plain ASCII"
+                    ));
+                }
+                if line.trim_start().starts_with("subgraph") {
+                    problems.push(format!(
+                        "{name} block {blocks_seen} line {n}: subgraph. A plain                          flowchart expresses the same thing and parses everywhere"
+                    ));
+                }
+                // A label is the text between [] or {}. If it is not wrapped in
+                // quotes, punctuation inside it can end the token early.
+                for (openc, closec) in [('[', ']'), ('{', '}')] {
+                    let mut hay = line;
+                    while let Some(i) = hay.find(openc) {
+                        let tail = &hay[i + 1..];
+                        let Some(j) = tail.find(closec) else { break };
+                        let label = &tail[..j];
+                        let quoted = label.starts_with('"') && label.ends_with('"');
+                        if !label.is_empty() && !quoted {
+                            problems.push(format!(
+                                "{name} block {blocks_seen} line {n}: unquoted label                                  `{label}`. Wrap every label in double quotes"
+                            ));
+                        }
+                        hay = &tail[j + 1..];
+                    }
+                }
+            }
+            rest = &after[close + 3..];
+        }
+    }
+
+    assert!(blocks_seen >= 5, "only found {blocks_seen} mermaid blocks; the extractor is broken");
     assert!(problems.is_empty(), "{}", problems.join("\n  "));
 }
