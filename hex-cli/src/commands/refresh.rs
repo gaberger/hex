@@ -26,9 +26,20 @@ use anyhow::{Context, Result};
 use clap::Args;
 use colored::Colorize;
 
-const START_MARKER: &str = "<!-- hex:claude-md:start -->";
-const END_MARKER: &str = "<!-- hex:claude-md:end -->";
+pub const START_MARKER: &str = "<!-- hex:claude-md:start -->";
+pub const END_MARKER: &str = "<!-- hex:claude-md:end -->";
 const LEGACY_HEADING: &str = "## hex Autonomous Behavior";
+
+/// The shipped section, wrapped in the markers that make a later `hex refresh`
+/// a pure replacement.
+///
+/// `hex init` uses this too. It used to write the section bare, which meant a
+/// freshly initialised project had neither a marker nor the legacy heading, so
+/// `hex refresh` declined to touch it — the projects most likely to want a
+/// newer rule set were the only ones that could never receive one.
+pub fn wrapped_hex_section() -> String {
+    format!("{START_MARKER}\n{}\n{END_MARKER}", hex_section_template().trim())
+}
 
 #[derive(Args, Debug)]
 pub struct RefreshArgs {
@@ -48,22 +59,16 @@ pub async fn run(args: RefreshArgs) -> Result<()> {
 
     // Refresh the hex-managed config files. This is the install-integrity
     // sweep — every asset hex init writes, refresh re-syncs (idempotent
-    // merges, never destructive). Solves the "MCP tools not loaded in this
-    // session" failure mode where a project had a partial install and the
-    // hex MCP server entry was never added to .mcp.json.
+    // merges, never destructive).
+    //
+    // The .mcp.json and hex-statusline.cjs entries went with the MCP server
+    // and the daemon statusline they configured (ADR-2608241500). Re-syncing a
+    // config that points at a deleted verb is worse than not syncing at all.
     if !args.dry_run {
         let installs: &[(&str, Box<dyn Fn() -> Result<()>>)] = &[
             (
-                ".mcp.json (hex MCP server entry)",
-                Box::new(|| super::init::create_mcp_json(&target)),
-            ),
-            (
-                ".claude/settings.json (hooks + statusLine + permissions)",
+                ".claude/settings.json (hooks + permissions)",
                 Box::new(|| super::init::create_claude_settings(&target)),
-            ),
-            (
-                "scripts/hex-statusline.cjs",
-                Box::new(|| super::init::install_statusline_script(&target)),
             ),
         ];
         for (label, run) in installs {
@@ -86,7 +91,7 @@ pub async fn run(args: RefreshArgs) -> Result<()> {
     let existing = fs::read_to_string(&claude_md)
         .with_context(|| format!("reading {}", claude_md.display()))?;
     let template = hex_section_template();
-    let wrapped = format!("{START_MARKER}\n{}\n{END_MARKER}", template.trim());
+    let wrapped = wrapped_hex_section();
 
     let (updated, how) = if let (Some(start), Some(end)) = (
         existing.find(START_MARKER),
@@ -168,10 +173,17 @@ fn hex_section_template() -> String {
 /// those terminates it. If none found, returns `slice.len()` (EOF).
 fn find_legacy_section_end(slice: &str) -> usize {
     const HEX_HEADINGS: &[&str] = &[
+        // Pre-collapse headings. Kept so a CLAUDE.md written by an older hex
+        // is still recognised as one span and replaced whole, rather than
+        // leaving half a daemon-era rule set stranded below the new section.
         "## hex Autonomous Behavior",
         "## hex Tool Precedence",
+        // Current headings.
+        "## hex — how to work in this project",
+        "## Development pipeline",
         "## Hexagonal Architecture Rules",
         "## File Organization",
+        "## Lessons that a rule cannot catch",
     ];
     let mut cursor = 0;
     // Skip past the opening heading line itself so we don't match it.

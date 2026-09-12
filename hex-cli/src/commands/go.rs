@@ -6,7 +6,6 @@
 use colored::Colorize;
 use std::path::Path;
 
-use crate::nexus_client::NexusClient;
 
 pub async fn run() -> anyhow::Result<()> {
     println!("{} hex go\n", "\u{2b21}".cyan());
@@ -14,7 +13,6 @@ pub async fn run() -> anyhow::Result<()> {
     let mut actions_needed = false;
 
     // 1. Check if nexus is running
-    actions_needed |= check_nexus().await;
 
     // 2. Check if release binary is stale
     actions_needed |= check_binary_staleness().await;
@@ -33,25 +31,6 @@ pub async fn run() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Check if hex-nexus daemon is running.
-async fn check_nexus() -> bool {
-    let nexus = NexusClient::from_env();
-    match nexus.ensure_running().await {
-        Ok(()) => {
-            println!("  {} nexus running", "\u{2713}".green());
-            false
-        }
-        Err(_) => {
-            println!(
-                "  {} nexus not running {}",
-                "\u{2192}".yellow(),
-                "— start with: hex nexus start".dimmed()
-            );
-            true
-        }
-    }
 }
 
 /// Check if the release binary is stale relative to HEAD commit time.

@@ -94,7 +94,7 @@ impl Tool for WorkspaceBoundaryCheck {
         let verbose = input.get("verbose").and_then(|v| v.as_bool()).unwrap_or(false);
 
         let repo_root = std::env::var("HEX_REPO_ROOT")
-            .unwrap_or_else(|_| "/home/gary/hex-intf".to_string());
+            .unwrap_or_else(|_| crate::repo_root());
         let repo_path = Path::new(&repo_root);
 
         // Build rule map for O(1) lookups

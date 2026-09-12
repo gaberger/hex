@@ -69,7 +69,7 @@ impl Tool for TypescriptCheck {
             .unwrap_or("tsconfig.json");
 
         let repo_root = std::env::var("HEX_REPO_ROOT")
-            .unwrap_or_else(|_| "/home/gary/hex-intf".to_string());
+            .unwrap_or_else(|_| crate::repo_root());
         let cwd = format!("{}/{}", repo_root, assets_dir);
 
         // Prefer the project-local tsc via npx (uses node_modules/.bin/tsc).

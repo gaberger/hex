@@ -7,12 +7,10 @@
 //! `hex validate pipeline` — runs full build pipeline (build → test → analyze → validate)
 
 pub mod composition;
-pub mod liveness;
 
 use colored::Colorize;
 
 use crate::assets::Assets;
-use crate::nexus_client::NexusClient;
 
 pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
     println!("{} hex doctor", "\u{2b21}".cyan());
@@ -56,50 +54,7 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
 
     println!();
 
-    // 2. Check hex-nexus connectivity
-    println!("  {}", "hex-nexus:".bold());
-    let nexus = NexusClient::from_env();
-    match nexus.ensure_running().await {
-        Ok(()) => {
-            println!("    status:       {} ({})", "running".green(), nexus.url());
-
-            // Get version
-            if let Ok(ver) = nexus.get("/api/version").await {
-                if let Some(v) = ver["version"].as_str() {
-                    println!("    version:      {}", v);
-                }
-            }
-
-            // Check SpacetimeDB
-            let stdb_host = std::env::var("HEX_SPACETIMEDB_HOST")
-                .unwrap_or_else(|_| "http://127.0.0.1:3033".to_string());
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(2))
-                .build()
-                .ok();
-            if let Some(client) = client {
-                let stdb_ok = client
-                    .get(format!("{}{}", stdb_host, hex_core::SPACETIMEDB_PING_PATH))
-                    .send()
-                    .await
-                    .map(|r| r.status().is_success())
-                    .unwrap_or(false);
-                if stdb_ok {
-                    println!("    spacetimedb:  {}", "connected".green());
-                } else {
-                    println!("    spacetimedb:  {}", "disconnected".yellow());
-                }
-            }
-        }
-        Err(_) => {
-            println!("    status:       {}", "not running".yellow());
-            all_ok = false;
-        }
-    }
-
-    println!();
-
-    // 3. Check project structure
+    // 2. Check project structure
     println!("  {}", "Project:".bold());
     let cwd = std::env::current_dir()?;
     println!("    directory:    {}", cwd.display());

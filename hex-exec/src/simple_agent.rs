@@ -83,11 +83,20 @@ pub async fn run(
     } else {
         cfg.max_tokens
     };
+    // Config, then environment, then the project's configured tier. The last
+    // step used to be a hardcoded model id — a model the operator never chose
+    // and could not change by editing configuration, which is founding goal
+    // G1's failure case exactly.
     let model = cfg
         .model
         .clone()
         .or_else(|| std::env::var("HEX_AGENT_MODEL").ok())
-        .unwrap_or_else(|| "qwen2.5-coder:14b".to_string());
+        .or_else(|| hex_infer::tier_model("t2"))
+        .ok_or_else(|| {
+            "no model configured — set inference.tier_models.t2 in .hex/project.json \
+             or set HEX_AGENT_MODEL"
+                .to_string()
+        })?;
 
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(180))

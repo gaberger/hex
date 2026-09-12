@@ -1,0 +1,11 @@
+[package]
+name = "game-life-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[dev-dependencies]
+
+# This example stands alone. It is not a member of the hex workspace.
+[workspace]

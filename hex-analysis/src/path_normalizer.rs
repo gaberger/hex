@@ -68,7 +68,26 @@ pub fn resolve_import_path(
 }
 
 /// Normalize a file path for comparison: strip leading `./`, fix extensions.
+///
+/// Infers the language from the path itself. That is right for a real file and
+/// wrong for a *resolved import target*, which in Go and Rust is a package or
+/// module directory with no extension to infer from — use
+/// [`normalize_path_in`] there and pass the importing file's language.
 pub fn normalize_path(file_path: &str) -> String {
+    normalize_path_in(file_path, Language::from_path(file_path))
+}
+
+/// [`normalize_path`], with the language stated rather than guessed.
+///
+/// This exists because guessing was wrong in a way that produced confident,
+/// false violations. A Go import of `myapp/internal/ports` resolves to the
+/// directory `internal/ports`. With no extension, the guess fell through to
+/// the TypeScript branch and appended `.ts`, giving `internal/ports.ts` — a
+/// file that does not exist. The layer classifier then failed to match
+/// `/internal/ports/` against it, matched the `/internal/` catch-all instead,
+/// and reported "adapters must not import from usecases" against a correctly
+/// layered Go project.
+pub fn normalize_path_in(file_path: &str, lang: Language) -> String {
     let mut p = file_path.to_string();
 
     // Strip leading ./
@@ -76,10 +95,10 @@ pub fn normalize_path(file_path: &str) -> String {
         p = p[2..].to_string();
     }
 
-    let lang = Language::from_path(&p);
-
     match lang {
-        // Go and Rust files keep their extension; no transformation needed
+        // Go and Rust keep the path as written. A package or module path is a
+        // directory, and inventing a filename for it is how the bug above
+        // happened.
         Language::Go | Language::Rust => p,
         _ => {
             // TypeScript: Replace .js/.jsx extension with .ts/.tsx
@@ -300,4 +319,35 @@ mod tests {
         assert_eq!(a, "src/core/ports.rs");
         assert_eq!(b, "src/core/ports/mod.rs");
     }
+
+    /// A Go package import resolves to a directory. Appending `.ts` to it
+    /// produced `internal/ports.ts`, which the layer classifier then matched
+    /// against the `/internal/` catch-all instead of `/internal/ports/` — and
+    /// reported "adapters must not import from usecases" against a correctly
+    /// layered Go project. Found by requiring hex's own Go scaffold to grade
+    /// clean.
+    #[test]
+    fn a_go_package_path_never_gains_a_typescript_extension() {
+        assert_eq!(normalize_path_in("internal/ports", Language::Go), "internal/ports");
+        assert_eq!(normalize_path_in("internal/domain", Language::Go), "internal/domain");
+        assert_eq!(
+            normalize_path_in("adapters/secondary", Language::Go),
+            "adapters/secondary"
+        );
+    }
+
+    /// Same trap for Rust: `crate::ports` resolves to `src/ports`.
+    #[test]
+    fn a_rust_module_path_never_gains_a_typescript_extension() {
+        assert_eq!(normalize_path_in("src/ports", Language::Rust), "src/ports");
+    }
+
+    /// And the TypeScript behaviour this all hangs off is unchanged: an
+    /// extensionless TS import really does mean a `.ts` file.
+    #[test]
+    fn a_typescript_import_still_gains_its_extension() {
+        assert_eq!(normalize_path_in("src/core/ports", Language::TypeScript), "src/core/ports.ts");
+        assert_eq!(normalize_path("src/foo.js"), "src/foo.ts");
+    }
+
 }

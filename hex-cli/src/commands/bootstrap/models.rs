@@ -4,9 +4,10 @@ use tokio::time::sleep;
 
 #[derive(Debug, Clone)]
 pub struct ModelStatus {
+    /// The tier this model serves, e.g. "T2".
+    pub tier: String,
     pub name: String,
     pub loaded: bool,
-    pub size_mb: u32,
 }
 
 pub struct ModelLoader {
@@ -18,32 +19,34 @@ impl ModelLoader {
         Self { dry_run }
     }
 
-    pub async fn load_default_models(&self) -> anyhow::Result<Vec<ModelStatus>> {
-        let models = vec![
-            ("qwen3:4b", 4700),
-            ("qwen2.5-coder:32b", 19000),
-            ("gemma4:latest", 9600),
-        ];
-
+    /// Pull the models this project actually configures.
+    ///
+    /// The list used to be three hardcoded ids and a hardcoded download size
+    /// each. Two problems, and the second is worse than the first.
+    ///
+    /// The first is founding goal G1: a model named outside `hex-infer`
+    /// cannot be re-pointed by editing configuration.
+    ///
+    /// The second is that the list had **drifted out of agreement with the
+    /// config**. It pulled `gemma4:latest` and `qwen2.5-coder:32b` while
+    /// `.hex/project.json` declared `gemma4-12b` and `devstral-small-2:24b`.
+    /// So bootstrap downloaded up to 33 GB of models the project does not
+    /// use, reported success, and left the three it does use absent. A check
+    /// against the wrong subject passes for the wrong reason, and that is
+    /// indistinguishable from passing.
+    ///
+    /// Reading `inference.tier_models` makes drift impossible: the list and
+    /// the dispatcher now read the same line.
+    ///
+    /// The size estimate is gone rather than moved. It was a guess per model
+    /// id, it was never shown to be right, and the registry it would have to
+    /// track is not ours.
+    pub async fn load_configured_models(&self) -> anyhow::Result<Vec<ModelStatus>> {
         let mut statuses = vec![];
-
-        for (model_name, size_mb) in models {
-            if self.dry_run {
-                statuses.push(ModelStatus {
-                    name: model_name.to_string(),
-                    loaded: false,
-                    size_mb,
-                });
-            } else {
-                let loaded = self.pull_model(model_name).await;
-                statuses.push(ModelStatus {
-                    name: model_name.to_string(),
-                    loaded,
-                    size_mb,
-                });
-            }
+        for (label, _key, model) in hex_infer::configured_tiers() {
+            let loaded = if self.dry_run { false } else { self.pull_model(&model).await };
+            statuses.push(ModelStatus { tier: label.to_string(), name: model, loaded });
         }
-
         Ok(statuses)
     }
 
@@ -55,7 +58,7 @@ impl ModelLoader {
 
         // Pull the model with retries
         for attempt in 0..3 {
-            match Command::new("ollama")
+            match Command::new(hex_infer::local_provider().binary)
                 .arg("pull")
                 .arg(model_name)
                 .output()
@@ -80,7 +83,7 @@ impl ModelLoader {
     }
 
     fn model_exists(&self, model_name: &str) -> bool {
-        if let Ok(output) = Command::new("ollama")
+        if let Ok(output) = Command::new(hex_infer::local_provider().binary)
             .arg("show")
             .arg(model_name)
             .output()

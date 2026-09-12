@@ -20,9 +20,10 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use super::sched::{
-    autofix_workplan, check_binary_freshness, check_mcp_cli_parity, check_stale_worktrees,
-    check_workplan_status, FreshnessStatus,
+pub mod checks;
+use checks::{
+    autofix_workplan, check_binary_freshness, check_stale_worktrees, check_workplan_status,
+    FreshnessStatus,
 };
 
 /// Extended session state file (ADR-050).
@@ -124,27 +125,6 @@ impl SessionState {
         }
         self.allowed_paths.iter().any(|allowed| path.starts_with(allowed.as_str()))
     }
-}
-
-fn nexus_url(path: &str) -> String {
-    let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
-    format!("http://localhost:{}{}", port, path)
-}
-
-fn nexus_client(timeout_secs: u64) -> Result<reqwest::Client> {
-    let mut headers = reqwest::header::HeaderMap::new();
-    // Inject agent ID for agent-guarded endpoints (hexflo, swarms)
-    if let Some(state) = SessionState::load() {
-        if !state.agent_id.is_empty() {
-            if let Ok(val) = reqwest::header::HeaderValue::from_str(&state.agent_id) {
-                headers.insert("x-hex-agent-id", val);
-            }
-        }
-    }
-    Ok(reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout_secs))
-        .default_headers(headers)
-        .build()?)
 }
 
 /// Check lifecycle enforcement mode for this project.
@@ -269,81 +249,16 @@ async fn session_start(project_dir: &Path) -> Result<()> {
     println!("  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
     println!("  Project: {} ({})", name, id.get(..8).unwrap_or(id));
 
-    // Check if nexus is reachable and register as agent (ADR-048)
-    let nexus_status = check_nexus_health().await;
-    match nexus_status {
-        Ok(health) => {
-            println!("  Nexus:   {}", "connected".green());
+    // ADR-060: recover context from a previous session's checkpoint.
+    let _ = recover_restart_checkpoint().await;
+    // ADR-050: the active workplan, from local memory.
+    let _ = load_workplan_context(id).await;
 
-            // Report SpacetimeDB status from health response
-            let stdb_ok = health["spacetimedb"].as_bool().unwrap_or(false);
-            if stdb_ok {
-                println!("  StDB:    {}", "connected".green());
-            } else {
-                println!("  StDB:    {} (run `hex nexus start` to connect)", "offline".red());
-            }
+    // ADR-2026-03-30-1200: Inject architecture fingerprint into Claude Code
+    // context. stdout is picked up as session context — never skip this.
+    println!("\n{}", fingerprint_block(id, project_dir, name).await);
 
-            // Register this Claude Code session as an agent (ADR-048, ADR-058)
-            let _ = register_session_agent(project_dir, name).await;
-
-            // Ensure this project is registered in the dashboard (idempotent)
-            let _ = ensure_project_registered(project_dir, name).await;
-
-            // Evict dead agents from previous sessions (ADR-058)
-            if let Ok(evict_client) = nexus_client(3) {
-                let _ = evict_client.post(nexus_url("/api/hex-agents/evict")).send().await;
-            }
-
-            // ADR-060: Check for restart checkpoint from a previous session
-            let _ = recover_restart_checkpoint().await;
-
-            // ADR-2026-04-13-2330 + ADR-2026-04-14-1100: Summarise unacknowledged brain
-            // notifications so the operator notices them without running
-            // `hex inbox list`. Silent when empty or on error.
-            print_inbox_summary().await;
-
-            // ADR-2026-04-13-2300: Ensure brain daemon is running. Every Claude
-            // session in a hex project should have autonomous supervision
-            // active — operators shouldn't have to start the daemon manually
-            // after a reboot or `hex brain daemon-stop`.
-            ensure_brain_daemon_running();
-
-            // ADR-050: Load active workplan from HexFlo memory
-            let _ = load_workplan_context(id).await;
-
-            // ADR-2026-03-30-1200: Inject architecture fingerprint into Claude Code context.
-            // stdout is picked up by Claude Code as session context — never skip this.
-            // Strategy: fetch cached fingerprint → auto-generate if missing → print.
-            let client = crate::nexus_client::NexusClient::from_env();
-            let fp_text = match client.fetch_fingerprint_text(id).await {
-                Some(text) => Some(text),
-                None => {
-                    // Not cached — generate it now and re-fetch.
-                    let gen_url = format!("/api/projects/{}/fingerprint", id);
-                    let body = serde_json::json!({
-                        "project_root": project_dir.display().to_string(),
-                        "workplan_path": "",
-                    });
-                    let _ = client.post_long(&gen_url, &body).await;
-                    client.fetch_fingerprint_text(id).await
-                }
-            };
-            if let Some(text) = fp_text {
-                println!("\n{}", text);
-            } else {
-                // Generation failed — emit a minimal in-process block so context is never blank.
-                println!("\n{}", minimal_fingerprint_block_cached(project_dir, name));
-            }
-        }
-        Err(_) => {
-            println!("  Nexus:   {} (run `hex nexus start`)", "offline".yellow());
-            println!("  StDB:    {} (requires nexus)", "offline".dimmed());
-            // Nexus offline — emit minimal in-process fingerprint so context is never blank.
-            println!("\n{}", minimal_fingerprint_block(project_dir, name));
-        }
-    }
-
-    // ── Brain validate: workplan reconciliation ──────────────────────
+    // ── Workplan reconciliation ──────────────────────
     // Reconcile workplan task statuses against git history on every
     // session start so agents never act on stale "todo" states.
     match check_workplan_status() {
@@ -412,92 +327,6 @@ async fn session_start(project_dir: &Path) -> Result<()> {
     ensure_agent_hook(project_dir);
 
     Ok(())
-}
-
-/// Ensure the brain daemon is running. Idempotent: if the PID file references
-/// a live process, does nothing; otherwise spawns `hex brain daemon --background`
-/// with a 30s interval. Silent on success — prints a one-line notice only when
-/// launching a fresh daemon so operators see the autonomous supervisor coming up.
-fn ensure_brain_daemon_running() {
-    let pid_file = match dirs::home_dir() {
-        Some(h) => h.join(".hex").join("brain-daemon.pid"),
-        None => return,
-    };
-
-    if let Ok(raw) = std::fs::read_to_string(&pid_file) {
-        if let Ok(pid) = raw.trim().parse::<i32>() {
-            // kill(pid, 0) probes liveness without actually signalling.
-            // Safe: nix::unistd::kill with signal None is a no-op probe.
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::ExitStatusExt;
-                let status = std::process::Command::new("kill")
-                    .args(["-0", &pid.to_string()])
-                    .status();
-                if let Ok(s) = status {
-                    if s.success() || s.signal().is_none() && s.code() == Some(0) {
-                        return; // Daemon is alive.
-                    }
-                }
-            }
-        }
-    }
-
-    // Launch fresh daemon in the background.
-    let spawn_result = std::process::Command::new("hex")
-        .args(["brain", "daemon", "--background", "--interval", "30"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-
-    match spawn_result {
-        Ok(_) => eprintln!("  Brain:   {} autonomous supervisor", "started".green()),
-        Err(e) => eprintln!("  Brain:   {} failed to start ({})", "\u{2717}".red(), e),
-    }
-}
-
-/// Fetch unacknowledged brain notifications with priority >= 1 and print a
-/// compact summary on session start (ADR-2026-04-13-2330 + ADR-2026-04-14-1100).
-///
-/// Prints nothing when the queue is empty or the request fails — silence keeps
-/// the banner clean when nexus is warming up or the operator has no pending
-/// items. Shows the three most recent notifications to give immediate context.
-async fn print_inbox_summary() {
-    let client = match nexus_client(3) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    let resp = match client.get(nexus_url("/api/inbox?min_priority=1")).send().await {
-        Ok(r) if r.status().is_success() => r,
-        _ => return,
-    };
-
-    let items: Vec<serde_json::Value> = match resp.json().await {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    if items.is_empty() {
-        return;
-    }
-
-    let plural = if items.len() == 1 { "" } else { "s" };
-    println!(
-        "  Brain:   {} {} new notification{} \u{2014} `{}` to review",
-        "\u{2709}".yellow(),
-        items.len(),
-        plural,
-        "hex inbox list".cyan()
-    );
-
-    for item in items.iter().take(3) {
-        let priority = item["priority"].as_u64().unwrap_or(0);
-        let msg = item["message"].as_str().unwrap_or("(no message)");
-        let title: String = msg.lines().next().unwrap_or(msg).chars().take(72).collect();
-        let suffix = if msg.chars().count() > 72 { "\u{2026}" } else { "" };
-        println!("           [p{}] {}{}", priority, title, suffix);
-    }
 }
 
 /// Generate a minimal architecture fingerprint block from local project files.
@@ -646,100 +475,6 @@ fn ensure_agent_hook(project_dir: &std::path::Path) {
     }
 }
 
-/// Register this Claude Code session as an agent with hex-nexus (ADR-048).
-/// Extended with lifecycle state tracking (ADR-050).
-/// Register this Claude session as an agent with hex-nexus.
-/// Writes `~/.hex/sessions/agent-{CLAUDE_SESSION_ID}.json` with the agent_id.
-/// Called by session-start hook and by `hex dev start` (Phase 0).
-pub async fn register_session_agent(project_dir: &Path, project_name: &str) -> Result<()> {
-    let session_id = std::env::var("CLAUDE_SESSION_ID").unwrap_or_default();
-    let model = std::env::var("CLAUDE_MODEL").unwrap_or_else(|_| "unknown".to_string());
-    let hostname = gethostname::gethostname()
-        .to_string_lossy()
-        .to_string();
-
-    let client = nexus_client(3)?;
-    let url = nexus_url("/api/hex-agents/connect");
-
-    let agent_name = if session_id.is_empty() {
-        format!("claude-{}", &hostname)
-    } else {
-        format!("claude-{}", &session_id[..8.min(session_id.len())])
-    };
-
-    let resp = client
-        .post(&url)
-        .json(&serde_json::json!({
-            "host": hostname,
-            "name": agent_name,
-            "project_dir": project_dir.to_string_lossy(),
-            "model": model,
-            "session_id": session_id,
-        }))
-        .send()
-        .await?
-        .error_for_status()?;
-
-    let body: serde_json::Value = resp.json().await?;
-    let agent_id = body["agentId"].as_str().unwrap_or("");
-
-    if !agent_id.is_empty() {
-        let now = chrono::Utc::now().to_rfc3339();
-        // Walk PPID chain to find the `claude` process — our immediate parent
-        // may be a transient shell spawned by Claude Code to run hooks.
-        let claude_pid = find_ancestor_claude_pid();
-        let state = SessionState {
-            agent_id: agent_id.to_string(),
-            name: agent_name.clone(),
-            project: project_name.to_string(),
-            registered_at: now.clone(),
-            claude_pid,
-            last_heartbeat: Some(now),
-            edits: 0,
-            workplan_id: None,
-            swarm_id: None,
-            current_task_id: None,
-            phase: None,
-            worktree_path: None,
-            allowed_paths: Vec::new(),
-            worktree_branch: None,
-            fingerprint_generated_at: None,
-            pending_workplan_draft: None,
-        };
-        state.save()?;
-
-        println!("  Agent:   {} ({})", "registered".green(), agent_name);
-
-        // Auto-launch inference watch sidecar (ADR-2026-04-01-1200)
-        let hex_bin = std::env::current_exe()
-            .unwrap_or_else(|_| std::path::PathBuf::from("hex"));
-        let sessions_dir = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-            .join(".hex/sessions");
-        let pid_file = sessions_dir.join(format!("inference-watch-{}.pid", agent_id));
-
-        let already_running = pid_file.exists() && {
-            let pid_str = std::fs::read_to_string(&pid_file).unwrap_or_default();
-            let pid: u32 = pid_str.trim().parse().unwrap_or(0);
-            // Check if process is still alive (Unix: send signal 0)
-            pid > 0 && unsafe { libc::kill(pid as i32, 0) == 0 }
-        };
-
-        if !already_running {
-            if let Ok(child) = std::process::Command::new(&hex_bin)
-                .args(["inference", "watch", "--daemon"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-            {
-                let _ = std::fs::write(&pid_file, child.id().to_string());
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// SubagentStart — read stdin for HEXFLO_TASK:{uuid}, auto-assign the task.
 /// ADR-2026-03-22-1939 P2: Hardened with heartbeat, lazy connect, and ownership validation.
 async fn subagent_start() -> Result<()> {
@@ -758,9 +493,6 @@ async fn subagent_start() -> Result<()> {
         }
     }
 
-    // P2.3: Send heartbeat so parent agent doesn't go stale during subagent work
-    let _ = send_heartbeat().await;
-
     // Look for HEXFLO_TASK:{uuid} pattern in the subagent prompt
     let task_id = extract_hexflo_task(&stdin);
     if task_id.is_none() {
@@ -774,33 +506,15 @@ async fn subagent_start() -> Result<()> {
         None => return Ok(()),
     };
 
-    // P2.2: Lazy agent connect if session has no agent_id yet
+    // The agent id came from the daemon's roster and the task assignment from
+    // its HexFlo table. Neither exists; the session file is the state.
     if state.agent_id.is_empty() {
-        if let Ok(client) = nexus_client(2) {
-            let project_dir = std::env::var("CLAUDE_PROJECT_DIR").unwrap_or_default();
-            let body = serde_json::json!({
-                "name": format!("agent-{}", std::env::var("CLAUDE_SESSION_ID").unwrap_or_default()),
-                "project_dir": project_dir,
-            });
-            if let Ok(resp) = client.post(nexus_url("/api/hex-agents/connect")).json(&body).send().await {
-                if let Ok(data) = resp.json::<serde_json::Value>().await {
-                    if let Some(id) = data["agent_id"].as_str() {
-                        state.agent_id = id.to_string();
-                        let _ = state.save();
-                    }
-                }
-            }
-        }
+        state.agent_id = format!(
+            "agent-{}",
+            std::env::var("CLAUDE_SESSION_ID").unwrap_or_else(|_| "local".into())
+        );
+        let _ = state.save();
     }
-
-    // Assign the task via nexus REST API
-    let client = nexus_client(2)?;
-    let url = nexus_url(&format!("/api/hexflo/tasks/{}", task_id));
-    let _ = client
-        .patch(&url)
-        .json(&serde_json::json!({ "agent_id": state.agent_id }))
-        .send()
-        .await;
 
     // P4: Capture HEXFLO_WORKPLAN:{id} if present in subagent prompt
     if let Some(wp_id) = extract_prefixed_value(&stdin, "HEXFLO_WORKPLAN:") {
@@ -810,35 +524,10 @@ async fn subagent_start() -> Result<()> {
     // Extract swarm_id for tier gate enforcement
     let swarm_id = extract_prefixed_value(&stdin, "HEXFLO_SWARM:");
 
-    // Resolve worktree branch from workplan step matching task title
-    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
-    if let Some((branch, step_id)) = resolve_worktree_from_workplan(&client, &task_id, &project_dir).await {
-        state.set_worktree(&branch);
-        state.worktree_branch = Some(branch.clone());
-
-        // Step 5: tier gate — block if lower-tier tasks are still pending
-        if let Some(ref sid) = swarm_id {
-            if !step_id.is_empty() {
-                let tier_mode = std::env::var("HEX_TIER_ENFORCEMENT").unwrap_or_default();
-                match check_tier_gate(&client, sid, &step_id).await {
-                    Ok(()) => {}
-                    Err(msg) => {
-                        if tier_mode == "mandatory" {
-                            eprintln!("{msg}");
-                            std::process::exit(1);
-                        } else {
-                            eprintln!("WARNING: {msg}");
-                        }
-                    }
-                }
-            }
-        }
-
-        // Step 3: auto-create the worktree and populate allowed_paths
-        ensure_worktree_exists(&branch, &project_dir, &mut state);
-    }
+    // The worktree branch and the tier gate both came from the HexFlo task
+    // table, which the daemon owned. A subagent runs in this process now, on
+    // the branch the operator is on.
+    let _ = &swarm_id;
 
     // Track the mapping so SubagentStop can complete it
     state.current_task_id = Some(task_id);
@@ -987,155 +676,6 @@ fn derive_allowed_paths(branch: &str) -> Vec<String> {
     paths
 }
 
-/// Returns Err with a message if tier gate is violated (blocking deps not done).
-/// Returns Ok(()) on pass or if enforcement is disabled/unavailable. Fail-open.
-async fn check_tier_gate(
-    client: &reqwest::Client,
-    swarm_id: &str,
-    current_step_id: &str,
-) -> Result<(), String> {
-    // Parse tier from "P{N}.{M}" format
-    let current_tier: u8 = current_step_id
-        .strip_prefix('P')
-        .and_then(|s| s.split('.').next())
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(0);
-
-    if current_tier == 0 {
-        return Ok(()); // Tier 0 has no dependencies
-    }
-
-    // Fetch all tasks for the swarm
-    let url = nexus_url(&format!("/api/swarms/{}/tasks", swarm_id));
-    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Ok(()); // Fail-open on API errors
-    }
-    let tasks: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let arr = match tasks.as_array() {
-        Some(a) => a.clone(),
-        None => return Ok(()),
-    };
-
-    // Find incomplete tasks in a lower tier
-    let mut blocking: Vec<String> = Vec::new();
-    for task in &arr {
-        let title = task["title"].as_str().unwrap_or("");
-        // Parse step_id from JSON field or title pattern like "P0.1"
-        let step_id = if let Some(sid) = task["step_id"].as_str() {
-            sid.to_string()
-        } else {
-            // Try to extract from JSON-encoded title like {"step_id":"P0.1",...}
-            serde_json::from_str::<serde_json::Value>(title)
-                .ok()
-                .and_then(|v| v["step_id"].as_str().map(|s| s.to_string()))
-                .unwrap_or_default()
-        };
-        if step_id.is_empty() {
-            continue;
-        }
-        let tier: u8 = step_id
-            .strip_prefix('P')
-            .and_then(|s| s.split('.').next())
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(current_tier);
-        if tier >= current_tier {
-            continue;
-        }
-        let status = task["status"].as_str().unwrap_or("pending");
-        if status == "pending" || status == "in_progress" {
-            blocking.push(format!(
-                "{}({})",
-                step_id,
-                task["id"].as_str().unwrap_or("?")
-            ));
-        }
-    }
-
-    if blocking.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "TIER GATE: step {} (tier {}) cannot start — tier {} tasks still pending: {}",
-            current_step_id,
-            current_tier,
-            current_tier - 1,
-            blocking.join(", ")
-        ))
-    }
-}
-
-/// Fetch the HexFlo task title, find the matching workplan step, and return its
-/// `worktree_branch`. Fail-open: returns `None` on any error.
-async fn resolve_worktree_from_workplan(
-    client: &reqwest::Client,
-    task_id: &str,
-    project_dir: &Path,
-) -> Option<(String, String)> {
-    // 1. Fetch task metadata from nexus to get the title/description
-    let task_url = nexus_url(&format!("/api/hexflo/tasks/{}", task_id));
-    let task_resp = client.get(&task_url).send().await.ok()?;
-    let task_json: serde_json::Value = task_resp.json().await.ok()?;
-    let task_title = task_json
-        .get("title")
-        .or_else(|| task_json.get("description"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    if task_title.is_empty() {
-        eprintln!(
-            "[hex hook] subagent-start: task {} has no title, skipping workplan resolution",
-            task_id
-        );
-        return None;
-    }
-
-    // 2. Find active workplan files in docs/workplans/ (newest first)
-    let workplans_dir = project_dir.join("docs/workplans");
-    if !workplans_dir.exists() {
-        return None;
-    }
-
-    let entries = std::fs::read_dir(&workplans_dir).ok()?;
-    let mut candidates: Vec<(std::time::SystemTime, PathBuf)> = entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
-        .filter_map(|e| {
-            let path = e.path();
-            let mtime = e.metadata().ok()?.modified().ok()?;
-            let raw = std::fs::read_to_string(&path).ok()?;
-            if raw.contains("\"active\"") || raw.contains("\"in_progress\"") {
-                Some((mtime, path))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    candidates.sort_by(|a, b| b.0.cmp(&a.0));
-
-    for (_, path) in &candidates {
-        let raw = match std::fs::read_to_string(path) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        let wp: serde_json::Value = match serde_json::from_str(&raw) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if let Some(branch) = find_branch_in_workplan(&wp, &task_title) {
-            return Some(branch);
-        }
-    }
-
-    eprintln!(
-        "[hex hook] subagent-start: no workplan step matched task '{}'",
-        task_title
-    );
-    None
-}
-
 /// Walk a workplan JSON for a step whose description contains `task_title`
 /// (case-insensitive substring). Returns the `worktree_branch` field if found.
 fn find_branch_in_workplan(wp: &serde_json::Value, task_title: &str) -> Option<(String, String)> {
@@ -1218,17 +758,10 @@ async fn subagent_stop() -> Result<()> {
         stdin.trim().to_string()
     };
 
-    // Complete the task via nexus REST API
-    let client = nexus_client(2)?;
-    let url = nexus_url(&format!("/api/hexflo/tasks/{}", task_id));
-    let _ = client
-        .patch(&url)
-        .json(&serde_json::json!({
-            "status": "completed",
-            "result": result,
-        }))
-        .send()
-        .await;
+    // The completion PATCH went to the daemon's HexFlo task table. What
+    // actually matters here — clearing the task and merging the worktree —
+    // is local and follows.
+    let _ = (&task_id, &result);
 
     // Clear the current task from session state
     let mut state = state;
@@ -1372,84 +905,18 @@ fn extract_hexflo_task(text: &str) -> Option<String> {
 }
 
 async fn session_end(_project_dir: &PathBuf) -> Result<()> {
-    // ADR-050: Flush progress to HexFlo memory, then deregister (ADR-048)
-    let _ = flush_session_progress().await;
-    let _ = deregister_session_agent().await;
-    Ok(())
-}
-
-/// Flush session progress to HexFlo memory before disconnecting (ADR-050).
-async fn flush_session_progress() -> Result<()> {
-    let state = match SessionState::load() {
-        Some(s) => s,
-        None => return Ok(()),
-    };
-
-    // Only flush if there was meaningful activity
-    if state.edits == 0 && state.workplan_id.is_none() {
-        return Ok(());
+    // Progress used to be flushed to HexFlo memory and the agent deregistered
+    // from the daemon's roster. There is no roster.
+    //
+    // The checkpoint is written here now. Its only trigger used to be a
+    // "restart" notification in the daemon's inbox — so in practice it fired
+    // almost never, and `recover_restart_checkpoint` had nothing to find.
+    // Session end is when a session actually has something worth carrying.
+    if let Some(state) = SessionState::load() {
+        if !state.agent_id.is_empty() {
+            let _ = save_restart_checkpoint(&state);
+        }
     }
-
-    let client = nexus_client(2)?;
-
-    // Store session summary in HexFlo memory
-    let memory_key = format!("session:{}:summary", state.name);
-    let summary = serde_json::json!({
-        "agent": state.name,
-        "workplan": state.workplan_id,
-        "swarm": state.swarm_id,
-        "task": state.current_task_id,
-        "phase": state.phase,
-        "edits": state.edits,
-        "ended_at": chrono::Utc::now().to_rfc3339(),
-    });
-
-    let _ = client
-        .post(nexus_url("/api/hexflo/memory"))
-        .json(&serde_json::json!({
-            "key": memory_key,
-            "value": summary.to_string(),
-            "scope": "project",
-        }))
-        .send()
-        .await;
-
-    // If there's an active swarm task, update its status
-    if let Some(task_id) = &state.current_task_id {
-        let _ = client
-            .patch(nexus_url(&format!("/api/swarms/tasks/{}", task_id)))
-            .json(&serde_json::json!({
-                "status": "paused",
-                "result": format!("Session ended after {} edits", state.edits),
-            }))
-            .send()
-            .await;
-    }
-
-    Ok(())
-}
-
-/// Deregister this Claude Code session from hex-nexus (ADR-048).
-async fn deregister_session_agent() -> Result<()> {
-    let state = match SessionState::load() {
-        Some(s) => s,
-        None => return Ok(()),
-    };
-
-    if !state.agent_id.is_empty() {
-        let client = nexus_client(2)?;
-
-        // Fire-and-forget — don't block session teardown
-        let _ = client
-            .post(nexus_url("/api/agents/disconnect"))
-            .json(&serde_json::json!({ "agentId": state.agent_id }))
-            .send()
-            .await;
-    }
-
-    // Clean up state file regardless of disconnect success
-    let _ = std::fs::remove_file(SessionState::state_file_path());
-
     Ok(())
 }
 
@@ -1527,19 +994,13 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
 async fn post_edit(project_dir: &PathBuf) -> Result<()> {
     let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
-        if let Some(file_path) = input["file_path"].as_str() {
-            // Notify nexus for live dashboard updates
-            let _ = notify_nexus_edit(project_dir, file_path).await;
-
-            // ADR-050: Increment edit counter and update HexFlo memory
+        if input["file_path"].as_str().is_some() {
+            // The dashboard notification and the HexFlo edit event both went
+            // to the daemon. The counter is local and stays.
             if let Some(mut state) = SessionState::load() {
                 state.edits += 1;
                 let _ = state.save();
-
-                // Push edit event to HexFlo memory (best-effort)
-                let _ = record_edit_event(&state, file_path).await;
             }
-
         }
     }
     Ok(())
@@ -1652,45 +1113,8 @@ async fn pre_agent() -> Result<()> {
         }
     }
 
-    // If task present, validate it exists in an active swarm (best-effort)
-    if let Some(task_id) = extract_hexflo_task(prompt) {
-        if let Ok(client) = nexus_client(2) {
-            let url = nexus_url(&format!("/api/hexflo/tasks/{}", task_id));
-            match client.get(&url).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    // ADR-2026-03-23-2000: Validate parent swarm is active
-                    if let Ok(body) = resp.json::<serde_json::Value>().await {
-                        let swarm_status = body["swarmStatus"].as_str().unwrap_or("unknown");
-                        if swarm_status != "active" {
-                            if mode == "mandatory" {
-                                println!(
-                                    "\u{26d4} HEXFLO_TASK:{} belongs to {} swarm — cannot proceed (ADR-2026-03-23-2000)",
-                                    &task_id[..8.min(task_id.len())],
-                                    swarm_status
-                                );
-                                std::process::exit(2);
-                            } else {
-                                println!(
-                                    "\u{26a0}\u{fe0f} HEXFLO_TASK:{} belongs to {} swarm — proceeding in advisory mode",
-                                    &task_id[..8.min(task_id.len())],
-                                    swarm_status
-                                );
-                            }
-                        }
-                    }
-                }
-                Ok(resp) if resp.status().as_u16() == 404 => {
-                    println!(
-                        "\u{26d4} HEXFLO_TASK:{} not found — create the task first", &task_id[..8.min(task_id.len())]
-                    );
-                    std::process::exit(2);
-                }
-                _ => {
-                    // Nexus unreachable — degrade to advisory (don't block offline work)
-                }
-            }
-        }
-    }
+    // Swarm membership used to be validated against the daemon's HexFlo task
+    // table. There are no swarms and no table.
 
     Ok(())
 }
@@ -1789,43 +1213,44 @@ async fn refresh_fingerprint_if_stale(project_dir: &Path) -> Result<()> {
         return Ok(());
     }
 
-    // Best-effort regeneration — don't block or fail the hook on errors
-    let nexus = crate::nexus_client::NexusClient::from_env();
-
-    // Find active workplan path from session state
-    let workplan_path = SessionState::load()
-        .and_then(|s| s.workplan_id)
-        .map(|id| format!("docs/workplans/{}.json", id))
+    // Best-effort regeneration — never block or fail the hook.
+    let name = project_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-
-    let fp_body = serde_json::json!({
-        "project_root": project_dir.display().to_string(),
-        "workplan_path": workplan_path,
-    });
-
-    if nexus.post_long(&format!("/api/projects/{}/fingerprint", project_id), &fp_body).await.is_ok() {
-        // Update session state timestamp
-        if let Some(mut state) = SessionState::load() {
-            state.fingerprint_generated_at = Some(chrono::Utc::now().to_rfc3339());
-            let _ = state.save();
-        }
-        // Print updated fingerprint as context for Claude Code
-        if let Some(fp_text) = nexus.fetch_fingerprint_text(&project_id).await {
-            println!("\n{}", fp_text);
-        }
+    println!("\n{}", fingerprint_block(&project_id, project_dir, &name).await);
+    if let Some(mut state) = SessionState::load() {
+        state.fingerprint_generated_at = Some(chrono::Utc::now().to_rfc3339());
+        let _ = state.save();
     }
 
     Ok(())
 }
 
+/// The architecture fingerprint for this project, as an injection block.
+///
+/// Falls back to the minimal in-process block if extraction fails, because
+/// blank session context is worse than a thin one.
+async fn fingerprint_block(project_id: &str, project_dir: &Path, name: &str) -> String {
+    let workplan = SessionState::load()
+        .and_then(|s| s.workplan_id)
+        .map(|id| project_dir.join(format!("docs/workplans/{}.json", id)))
+        .filter(|p| p.exists());
+    let fp = hex_analysis::fingerprint_extractor::FingerprintExtractor::extract(
+        project_id,
+        project_dir,
+        workplan.as_deref(),
+    )
+    .await;
+    let block = fp.to_injection_block();
+    if block.trim().is_empty() {
+        return minimal_fingerprint_block(project_dir, name);
+    }
+    block
+}
+
 async fn route(project_dir: &Path) -> Result<()> {
     let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
-
-    // ADR-050: Send heartbeat on every user interaction
-    let _ = send_heartbeat().await;
-
-    // ADR-060: Check agent inbox for critical notifications
-    let _ = check_inbox().await;
 
     // ADR-2026-03-30-1200: Refresh architecture fingerprint if key project files have changed
     let _ = refresh_fingerprint_if_stale(project_dir).await;
@@ -2118,437 +1543,79 @@ fn detect_hex_layer(rel_path: &str) -> Option<&'static str> {
 
 // ── Agent Notification Inbox (ADR-060) ───────────────────────────────
 
-/// Check for unacknowledged critical notifications in the agent's inbox.
-/// Priority-2 messages are always shown. Priority 0-1 are shown once
-/// (tracked via session state `last_inbox_check` timestamp).
+/// Save a restart checkpoint so the next session can pick up where this one
+/// stopped (ADR-060 step 8).
 ///
-/// For `restart` notifications: automatically saves session state to HexFlo
-/// memory before prompting the user, so the next session can recover context.
-async fn check_inbox() -> Result<()> {
-    let state = match SessionState::load() {
-        Some(s) if !s.agent_id.is_empty() => s,
-        _ => return Ok(()),
-    };
-
-    let client = match nexus_client(2) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
-
-    // Only check critical (priority 2) — always re-delivered until acked
-    let url = nexus_url(&format!(
-        "/api/hexflo/inbox/{}?min_priority=2&unacked_only=true",
-        state.agent_id
-    ));
-
-    let resp = match client.get(&url).send().await {
-        Ok(r) if r.status().is_success() => r,
-        _ => return Ok(()),
-    };
-
-    let body: serde_json::Value = match resp.json().await {
-        Ok(b) => b,
-        Err(_) => return Ok(()),
-    };
-
-    let notifications = body["notifications"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-
-    if notifications.is_empty() {
-        return Ok(());
-    }
-
-    // ADR-060 step 8: For restart notifications, save state BEFORE prompting
-    let has_restart = notifications.iter().any(|n| n["kind"].as_str() == Some("restart"));
-    if has_restart {
-        let _ = save_restart_checkpoint(&state, &client).await;
-    }
-
-    // Print to stdout — this gets injected into Claude's context
-    println!();
-    println!("\u{26a0} CRITICAL NOTIFICATION(S) \u{2014} action required:");
-    for n in &notifications {
-        let kind = n["kind"].as_str().unwrap_or("unknown");
-        let payload = n["payload"].as_str().unwrap_or("{}");
-        let id = n["id"].as_u64().unwrap_or(0);
-        println!("  [{}] #{}: {}", kind, id, payload);
-
-        // ADR-2026-04-01-0000 Path B: inference-queue notifications require the outer
-        // Claude Code session to spawn an Agent tool with the queued prompt, then
-        // PATCH the queue entry status to Completed/Failed.
-        if kind == "inference-queue" {
-            if let Ok(p) = serde_json::from_str::<serde_json::Value>(payload) {
-                let queue_id = p["queue_id"].as_str().unwrap_or("");
-                let task_id = p["task_id"].as_str().unwrap_or("");
-                let workplan_id = p["workplan_id"].as_str().unwrap_or("");
-                let summary = p["summary"].as_str().unwrap_or("");
-                println!();
-                println!("  PATH-B-TASK: queue_id={} task_id={} workplan_id={}", queue_id, task_id, workplan_id);
-                println!("  ACTION: Spawn Agent tool with prompt from hex memory get inference:queue:{}", queue_id);
-                println!("  AFTER: PATCH /api/inference/queue/{} with {{\"status\":\"Completed\",\"agent_id\":\"<agent_id>\"}}", queue_id);
-                println!("  SUMMARY: {}", summary);
-                println!("  ACK notification #{} after dispatching agent.", id);
-            }
-        }
-    }
-    println!();
-
-    if has_restart {
-        println!("Session state has been saved automatically.");
-        println!("To acknowledge and restart: hex inbox ack <id>, then restart your session.");
-        println!("The next session will recover your workplan/task/swarm context.");
-    } else {
-        println!("To acknowledge: hex inbox ack <id>");
-    }
-    println!();
-
-    Ok(())
-}
-
-/// Save a restart checkpoint to HexFlo memory (ADR-060 step 8).
-/// Stores current session state so the next session can recover context.
-async fn save_restart_checkpoint(state: &SessionState, client: &reqwest::Client) -> Result<()> {
-    let session_id = std::env::var("CLAUDE_SESSION_ID").unwrap_or_default();
+/// Was a POST to the daemon's HexFlo memory table. It is a local memory entry
+/// now — which also means a checkpoint survives when nothing is running.
+fn save_restart_checkpoint(state: &SessionState) -> Result<()> {
     let checkpoint = serde_json::json!({
         "agent_id": state.agent_id,
         "agent_name": state.name,
         "project": state.project,
         "workplan_id": state.workplan_id,
-        "swarm_id": state.swarm_id,
         "current_task_id": state.current_task_id,
         "phase": state.phase,
         "edits": state.edits,
-        "session_id": session_id,
+        "session_id": std::env::var("CLAUDE_SESSION_ID").unwrap_or_default(),
         "saved_at": chrono::Utc::now().to_rfc3339(),
     });
-
-    // Store under a well-known key so session_start can find it
-    let memory_key = format!("restart:checkpoint:{}", state.agent_id);
-    let _ = client
-        .post(nexus_url("/api/hexflo/memory"))
-        .json(&serde_json::json!({
-            "key": memory_key,
-            "value": checkpoint.to_string(),
-            "scope": "project",
-        }))
-        .send()
-        .await;
-
-    Ok(())
-}
-
-// ── Nexus communication ──────────────────────────────────────────────
-
-/// Idempotent project registration — registers if not already in the dashboard.
-/// Called from session_start so the project always appears in the control plane.
-async fn ensure_project_registered(project_dir: &Path, name: &str) -> Result<()> {
-    let client = nexus_client(3)?;
-    let root = project_dir.to_string_lossy().to_string();
-
-    // Check if already registered
-    if let Ok(resp) = client.get(nexus_url("/api/projects")).send().await {
-        if let Ok(body) = resp.json::<serde_json::Value>().await {
-            if let Some(projects) = body.get("projects").and_then(|v| v.as_array()) {
-                let already = projects.iter().any(|p| {
-                    p.get("rootPath").and_then(|v| v.as_str()) == Some(&root)
-                });
-                if already {
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    let body = serde_json::json!({ "rootPath": root, "name": name });
-    let _ = client
-        .post(nexus_url("/api/projects/register"))
-        .json(&body)
-        .send()
-        .await;
-
-    Ok(())
-}
-
-async fn check_nexus_health() -> Result<serde_json::Value> {
-    let client = nexus_client(2)?;
-    let resp = client.get(nexus_url("/api/health")).send().await?.error_for_status()?;
-    let body: serde_json::Value = resp.json().await?;
-    Ok(body)
-}
-
-async fn notify_nexus_edit(_project_dir: &PathBuf, file_path: &str) -> Result<()> {
-    let client = nexus_client(1)?;
-    let _ = client
-        .post(nexus_url("/api/events"))
-        .json(&serde_json::json!({
-            "type": "file_edit",
-            "path": file_path,
-        }))
-        .send()
-        .await;
-    Ok(())
-}
-
-// ── ADR-050: Lifecycle helpers ───────────────────────────────────────
-
-/// Recover context from a restart checkpoint saved by a previous session (ADR-060 step 8).
-/// If a checkpoint exists for this agent, inject the workplan/task/swarm context
-/// into the current session state and print a recovery banner.
-async fn recover_restart_checkpoint() -> Result<()> {
-    let state = match SessionState::load() {
-        Some(s) if !s.agent_id.is_empty() => s,
-        _ => return Ok(()),
-    };
-
-    let client = match nexus_client(2) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
-
-    let memory_key = format!("restart:checkpoint:{}", state.agent_id);
-    let encoded_key: String = memory_key
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
-                c.to_string()
-            } else {
-                format!("%{:02X}", c as u32)
-            }
-        })
-        .collect();
-    let url = nexus_url(&format!("/api/hexflo/memory/{}", encoded_key));
-
-    let resp = match client.get(&url).send().await {
-        Ok(r) if r.status().is_success() => r,
-        _ => return Ok(()),
-    };
-
-    let body: serde_json::Value = match resp.json().await {
-        Ok(b) => b,
-        Err(_) => return Ok(()),
-    };
-
-    let checkpoint: serde_json::Value = match body["value"]
-        .as_str()
-        .and_then(|v| serde_json::from_str(v).ok())
-    {
-        Some(cp) => cp,
-        None => return Ok(()),
-    };
-
-    // Restore session state from checkpoint
-    let mut state = state;
-    if let Some(wp) = checkpoint["workplan_id"].as_str() {
-        state.workplan_id = Some(wp.to_string());
-    }
-    if let Some(sw) = checkpoint["swarm_id"].as_str() {
-        state.swarm_id = Some(sw.to_string());
-    }
-    if let Some(ph) = checkpoint["phase"].as_str() {
-        state.phase = Some(ph.to_string());
-    }
-    // Don't restore current_task_id — the task may have been reclaimed
-    let _ = state.save();
-
-    // Print recovery banner
-    let prev_session = checkpoint["session_id"].as_str().unwrap_or("unknown");
-    let saved_at = checkpoint["saved_at"].as_str().unwrap_or("unknown");
-    let prev_edits = checkpoint["edits"].as_u64().unwrap_or(0);
-
-    println!(
-        "  {} Recovered from restart checkpoint (prev session: {}, {} edits, saved {})",
-        "\u{21ba}".green(),
-        &prev_session[..8.min(prev_session.len())],
-        prev_edits,
-        saved_at,
+    let _ = hex_exec::local_store::memory_put(
+        &format!("restart:checkpoint:{}", state.agent_id),
+        &checkpoint.to_string(),
     );
-
-    if let Some(wp) = &state.workplan_id {
-        println!("  Restored: workplan={}", wp);
-    }
-    if let Some(sw) = &state.swarm_id {
-        println!("  Restored: swarm={}", sw);
-    }
-
-    // Clean up the checkpoint so it's not replayed on future sessions
-    let _ = client
-        .delete(nexus_url(&format!("/api/hexflo/memory/{}", encoded_key)))
-        .send()
-        .await;
-
     Ok(())
 }
 
-/// Load active workplan context from HexFlo memory into session state.
-async fn load_workplan_context(project_id: &str) -> Result<()> {
-    let client = nexus_client(2)?;
-    let key = format!("workplan:active:{}", project_id);
-    let encoded_key: String = key.chars().map(|c| {
-        if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
-            c.to_string()
-        } else {
-            format!("%{:02X}", c as u32)
-        }
-    }).collect();
-    let url = nexus_url(&format!("/api/hexflo/memory/{}", encoded_key));
+/// ── ADR-050: Lifecycle helpers ───────────────────────────────────────
 
-    let resp = client.get(&url).send().await;
-    if let Ok(resp) = resp {
-        if resp.status().is_success() {
-            if let Ok(body) = resp.json::<serde_json::Value>().await {
-                let workplan_id = body["value"].as_str().and_then(|v| {
-                    serde_json::from_str::<serde_json::Value>(v)
-                        .ok()
-                        .and_then(|wp| wp["workplan_id"].as_str().map(String::from))
-                });
-
-                if let Some(wp_id) = workplan_id {
-                    if let Some(mut state) = SessionState::load() {
-                        state.phase = body["value"].as_str().and_then(|v| {
-                            serde_json::from_str::<serde_json::Value>(v)
-                                .ok()
-                                .and_then(|wp| wp["phase"].as_str().map(String::from))
-                        });
-                        state.swarm_id = body["value"].as_str().and_then(|v| {
-                            serde_json::from_str::<serde_json::Value>(v)
-                                .ok()
-                                .and_then(|wp| wp["swarm_id"].as_str().map(String::from))
-                        });
-                        state.workplan_id = Some(wp_id.clone());
-                        let _ = state.save();
-                    }
-                    println!("  Plan:    {} (active)", wp_id.green());
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Send heartbeat to hex-nexus (ADR-050).
-async fn send_heartbeat() -> Result<()> {
-    let mut state = match SessionState::load() {
-        Some(s) => s,
-        None => return Ok(()),
+/// Recover context from a checkpoint a previous session saved (ADR-060 step 8).
+async fn recover_restart_checkpoint() -> Result<()> {
+    let Some(mut state) = SessionState::load().filter(|s| !s.agent_id.is_empty()) else {
+        return Ok(());
+    };
+    let key = format!("restart:checkpoint:{}", state.agent_id);
+    let Some(raw) = hex_exec::local_store::memory_get(&key) else {
+        return Ok(());
+    };
+    let Ok(cp) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Ok(());
     };
 
-    // Lazy registration: if this session was never registered with nexus
-    // (e.g. nexus was offline at session start), try now.
-    if state.agent_id.is_empty() {
-        let _ = try_lazy_register(&mut state).await;
-        if state.agent_id.is_empty() {
-            return Ok(()); // Still can't register — nexus likely still offline
-        }
-    }
-
-    let client = nexus_client(2)?;
-    let url = nexus_url(&format!("/api/hex-agents/{}/heartbeat", state.agent_id));
-
-    let now = chrono::Utc::now().to_rfc3339();
-    let _ = client
-        .post(&url)
-        .json(&serde_json::json!({
-            "timestamp": &now,
-            "phase": state.phase,
-            "edits": state.edits,
-        }))
-        .send()
-        .await;
-
-    state.last_heartbeat = Some(now);
+    let field = |k: &str| cp.get(k).and_then(|v| v.as_str()).map(String::from);
+    state.workplan_id = field("workplan_id").or(state.workplan_id);
+    state.current_task_id = field("current_task_id").or(state.current_task_id);
+    state.phase = field("phase").or(state.phase);
     let _ = state.save();
 
-    Ok(())
-}
-
-/// Record an edit event in HexFlo memory (ADR-050).
-/// Attempt to register this session with nexus if it wasn't registered at startup.
-/// This handles the case where nexus was offline when the Claude Code session started
-/// but came online later. Runs silently — errors are swallowed.
-async fn try_lazy_register(state: &mut SessionState) -> Result<()> {
-    let session_id = std::env::var("CLAUDE_SESSION_ID").unwrap_or_default();
-    let model = std::env::var("CLAUDE_MODEL").unwrap_or_else(|_| "unknown".to_string());
-    let project_dir = std::env::var("CLAUDE_PROJECT_DIR").unwrap_or_default();
-    let hostname = gethostname::gethostname()
-        .to_string_lossy()
-        .to_string();
-
-    let agent_name = if session_id.is_empty() {
-        format!("claude-{}", &hostname)
-    } else {
-        format!("claude-{}", &session_id[..8.min(session_id.len())])
-    };
-
-    // Derive project name from dir
-    let project_name = std::path::Path::new(&project_dir)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-
-    let client = nexus_client(2)?;
-    let url = nexus_url("/api/agents/connect");
-
-    let resp = client
-        .post(&url)
-        .json(&serde_json::json!({
-            "host": hostname,
-            "name": agent_name,
-            "project_dir": project_dir,
-            "model": model,
-            "session_id": session_id,
-        }))
-        .send()
-        .await?
-        .error_for_status()?;
-
-    let body: serde_json::Value = resp.json().await?;
-    let agent_id = body["agentId"].as_str().unwrap_or("");
-
-    if !agent_id.is_empty() {
-        let now = chrono::Utc::now().to_rfc3339();
-        state.agent_id = agent_id.to_string();
-        state.name = agent_name;
-        state.project = project_name;
-        state.registered_at = now.clone();
-        state.claude_pid = find_ancestor_claude_pid();
-        state.last_heartbeat = Some(now);
-        state.save()?;
-
-        // Notify Claude that registration happened (appears in hook output)
-        eprintln!("  Agent:   registered (late registration)");
+    println!("  {} recovered from checkpoint", "\u{21ba}".cyan());
+    if let Some(ref wp) = state.workplan_id {
+        println!("  Plan:    {}", wp.green());
     }
-
+    // One-shot: a checkpoint consumed is a checkpoint spent, or every future
+    // session recovers the same stale context.
+    let _ = hex_exec::local_store::memory_delete(&key);
     Ok(())
 }
 
-async fn record_edit_event(state: &SessionState, file_path: &str) -> Result<()> {
-    if state.agent_id.is_empty() {
+/// Load the active workplan from local memory into session state (ADR-050).
+async fn load_workplan_context(project_id: &str) -> Result<()> {
+    let Some(raw) = hex_exec::local_store::memory_get(&format!("workplan:active:{project_id}"))
+    else {
         return Ok(());
+    };
+    let Ok(wp) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Ok(());
+    };
+    let Some(wp_id) = wp.get("workplan_id").and_then(|v| v.as_str()) else {
+        return Ok(());
+    };
+    if let Some(mut state) = SessionState::load() {
+        state.phase = wp.get("phase").and_then(|v| v.as_str()).map(String::from);
+        state.workplan_id = Some(wp_id.to_string());
+        let _ = state.save();
     }
-
-    let client = nexus_client(1)?;
-    let memory_key = format!("agent:{}:last_edit", state.agent_id);
-
-    let _ = client
-        .post(nexus_url("/api/hexflo/memory"))
-        .json(&serde_json::json!({
-            "key": memory_key,
-            "value": serde_json::json!({
-                "file": file_path,
-                "edit_number": state.edits,
-                "phase": state.phase,
-                "workplan": state.workplan_id,
-                "at": chrono::Utc::now().to_rfc3339(),
-            }).to_string(),
-            "scope": "agent",
-        }))
-        .send()
-        .await;
-
+    println!("  Plan:    {} (active)", wp_id.green());
     Ok(())
 }
 
@@ -2913,26 +1980,9 @@ async fn observe(event_type: &str) -> Result<()> {
     // Resolve agent_id from session state file (best-effort)
     let agent_id = SessionState::load().map(|s| s.agent_id).filter(|s| !s.is_empty());
 
-    let body = serde_json::json!({
-        "session_id": session_id,
-        "agent_id": agent_id,
-        "event_type": event_type,
-        "tool_name": tool_name,
-        "input_json": input_json,
-        "result_json": result_json,
-    });
-
-    // Fire-and-forget: 100 ms timeout, no retry, ignore errors.
-    let client = match nexus_client(1) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
-    let url = nexus_url("/api/events");
-    let _ = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        client.post(&url).json(&body).send(),
-    )
-    .await;
+    // The event POST fed the daemon's live dashboard. What this hook still
+    // does — extracting ★ Insight blocks — is local and follows.
+    let _ = (&session_id, &agent_id, &tool_name, &input_json);
 
     // ── Post-commit brain validate (fast subset) ────────────────────
     // After a Bash tool call that looks like a git commit, run the two
@@ -3027,18 +2077,6 @@ async fn observe(event_type: &str) -> Result<()> {
                     );
                 }
                 _ => {}
-            }
-
-            // MCP ↔ CLI parity — warn if tools are orphaned
-            if let Ok(orphans) = check_mcp_cli_parity() {
-                if !orphans.is_empty() {
-                    eprintln!(
-                        "{} {} MCP tools without CLI commands: {}",
-                        "⬡ brain:".yellow(),
-                        orphans.len(),
-                        orphans.join(", ")
-                    );
-                }
             }
         }
     }

@@ -38,6 +38,17 @@ pub fn init_grammars() -> bool {
     grammars.typescript.is_some() || grammars.go.is_some() || grammars.rust.is_some()
 }
 
+/// Rough token count for `byte_len` bytes of text, at four bytes per token.
+///
+/// One named function instead of the same `(len as f64 / 4.0).ceil() as i32`
+/// written in three places. The float-to-int cast in Rust saturates rather
+/// than truncating, so this is not the bug class the narrowing-cast rule is
+/// named for — but a cast nobody has to re-read is still better than three.
+fn estimate_tokens(byte_len: usize) -> i32 {
+    let est = (byte_len as f64 / 4.0).ceil();
+    if est >= i32::MAX as f64 { i32::MAX } else { est as i32 }
+}
+
 /// Parse a source file and produce an ASTSummary.
 ///
 /// This is the main entry point called from NAPI. It:
@@ -46,7 +57,7 @@ pub fn init_grammars() -> bool {
 /// 3. Never panics on bad input -- returns stubbed summaries instead
 pub fn parse_file(file_path: &str, source: &str, level: Level) -> ASTSummary {
     let lang = detect_language(file_path);
-    let line_count = source.lines().count() as i32;
+    let line_count = i32::try_from(source.lines().count()).unwrap_or(i32::MAX);
     // Match TS adapter: split('\n').length counts trailing empty
     let line_count = if source.ends_with('\n') {
         line_count + 1
@@ -55,7 +66,7 @@ pub fn parse_file(file_path: &str, source: &str, level: Level) -> ASTSummary {
     } else {
         line_count
     };
-    let full_token_estimate = (source.len() as f64 / 4.0).ceil() as i32;
+    let full_token_estimate = estimate_tokens(source.len());
 
     let grammars = GRAMMARS.get();
 
@@ -79,7 +90,7 @@ pub fn parse_file(file_path: &str, source: &str, level: Level) -> ASTSummary {
     match level {
         Level::L0 => {
             // Metadata only -- no parsing needed
-            let token_estimate = ((file_path.len() + 20) as f64 / 4.0).ceil() as i32;
+            let token_estimate = estimate_tokens(file_path.len() + 20);
             ASTSummary {
                 file_path: file_path.to_string(),
                 language: lang.as_str().to_string(),
@@ -172,7 +183,7 @@ pub fn parse_file(file_path: &str, source: &str, level: Level) -> ASTSummary {
                 }
                 s
             };
-            let token_estimate = (summary_text.len() as f64 / 4.0).ceil() as i32;
+            let token_estimate = estimate_tokens(summary_text.len());
 
             ASTSummary {
                 file_path: file_path.to_string(),

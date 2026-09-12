@@ -66,12 +66,6 @@ mod tests {
     }
 
     #[test]
-    fn mcp_tools_is_embedded() {
-        let tools = Assets::get_str("schemas/mcp-tools.json");
-        assert!(tools.is_some(), "mcp-tools.json should be embedded");
-    }
-
-    #[test]
     fn settings_template_is_embedded() {
         let settings = Assets::get_str("templates/hex-claude-settings.json");
         assert!(settings.is_some(), "settings template should be embedded");

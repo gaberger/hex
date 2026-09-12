@@ -6,7 +6,6 @@ use clap::Subcommand;
 use colored::Colorize;
 use serde_json::json;
 
-use crate::nexus_client::NexusClient;
 
 #[derive(Subcommand)]
 pub enum DoAction {
@@ -39,8 +38,10 @@ pub enum DoAction {
 }
 
 pub async fn run(action: DoAction) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
+    // No daemon. `hex do` used to POST the whole task to /api/direct/execute and require nexus to
+    // be up first — for a route that was a one-line passthrough to `execute_direct`, in a crate
+    // hex-cli already depends on. The control plane was relaying a call to a library sitting in
+    // the same binary.
 
     match action {
         DoAction::Run { instruction, file, evidence, model, attempts, fast, max_steps } => {
@@ -61,7 +62,8 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             println!("{} {} {}", "⬡ direct:".cyan().bold(), instruction, format!("[{}]", mode).dimmed());
             println!("  {} {}  {} {}", "file".dimmed(), file, "evidence".dimmed(), evidence);
 
-            let r = nexus.post_long("/api/direct/execute", &body).await?;
+            let task: hex_exec::direct_exec::DirectTask = serde_json::from_value(body)?;
+            let r = serde_json::to_value(hex_exec::direct_exec::execute_direct(task).await)?;
 
             let ok = r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
             let ev = r.get("evidence_passed").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -95,11 +97,25 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
                         println!("  {}", line.dimmed());
                     }
                 }
+                // Name the half that actually failed. This said "did not pass
+                // evidence" for every failure, including a run whose evidence
+                // passed and whose commit did not — which is the common case in
+                // a fresh clone with no git identity.
+                let evidence_passed = r
+                    .get("evidence_passed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if evidence_passed {
+                    anyhow::bail!("evidence passed; the run did not complete (see above)");
+                }
                 anyhow::bail!("direct run did not pass evidence");
             }
         }
         DoAction::Runs => {
-            let r = nexus.get("/api/direct/runs").await?;
+            let r = json!({
+                "summary": hex_exec::direct_exec::runs_summary(),
+                "runs": hex_exec::direct_exec::runs_snapshot(),
+            });
             let s = &r["summary"];
             let pass_pct = (s["pass_rate"].as_f64().unwrap_or(0.0) * 100.0) as u32;
             println!(

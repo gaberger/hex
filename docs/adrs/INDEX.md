@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**262 ADRs** across 4 epochs.
+**264 ADRs** across 4 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -14,7 +14,9 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
+| ADR-2026-09-11-1900 | proposed | ADR-2026-09-11-1900: Gate-first development — retire specs-first |  |
 | ADR-2609011058 | proposed | ADR-2609011058: AI-native SDLC skill family |  |
+| ADR-2608241500 | proposed | ADR-2608241500: Collapse hex to a solo software-engineering agent — retire the daemon, the coordination core, and founding goal G2 |  |
 | ADR-2607140850 | completed | ADR-2607140850: Continuous HuggingFace Model Researcher | — |
 | ADR-2607131500 | accepted | ADR-2607131500: Scaffold git hygiene, polyglot architecture analysis, and swarm-build retry resilience |  |
 | ADR-2607041035 | completed | ADR-2607041035: research-dashboard — a standalone hexagonal app to share results remotely |  |

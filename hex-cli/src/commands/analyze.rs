@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use colored::Colorize;
 use hex_core::rules::boundary::{self, Layer};
 
-use crate::nexus_client::NexusClient;
 
 /// Layers shown in the "Hex layers" checklist, in display order. Detection itself is
 /// language-agnostic (`hex_core::rules::boundary::detect_layer`, a path-substring
@@ -229,62 +228,61 @@ pub async fn run(
             }
         }
 
-        // Try nexus for full boundary analysis + nexus-computed score
-        let nexus = NexusClient::from_env();
-        let mut nexus_score: Option<u64> = None;
-        if nexus.ensure_running().await.is_ok() {
-            if let Ok(resp) = nexus.get("/api/projects").await {
-                if let Some(projects) = resp.get("projects").and_then(|p| p.as_array()) {
-                    let matching = projects.iter().find(|p| {
-                        p["rootPath"]
-                            .as_str()
-                            .map(|rp| root.to_string_lossy().contains(rp) || rp.contains(&*root.to_string_lossy()))
-                            .unwrap_or(false)
-                    });
-
-                    if let Some(project) = matching {
-                        let pid = project["id"].as_str().unwrap_or("-");
+        // Full tree-sitter boundary analysis, in-process (ADR-2608241500 P6.2).
+        // This used to ask the daemon, and only if it happened to be running
+        // and to have this directory registered as a project — so the
+        // authoritative score depended on a background process and a
+        // registration step. Same `hex-analysis` engine either way.
+        let deep_score: Option<u64> = match deep_analysis(&root).await {
+            Ok(result) => {
+                if !result.violations.is_empty() {
+                    println!(
+                        "    {} Boundary violations: {}",
+                        "\u{26a0}".yellow(),
+                        result.violations.len().to_string().red()
+                    );
+                    // Name them. A count tells you something is wrong; only the
+                    // file and the rule tell you what to change.
+                    for v in result.violations.iter().take(10) {
                         println!(
-                            "    {} Nexus: project registered ({})",
-                            "\u{2713}".green(),
-                            pid
+                            "        {} {} {} {}",
+                            v.edge.from_file.dimmed(),
+                            "\u{2192}".dimmed(),
+                            v.edge.to_file,
+                            format!("({})", v.rule).red()
                         );
-                        let health_path = format!("/api/{}/health", pid);
-                        if let Ok(health) = nexus.get(&health_path).await {
-                            nexus_score = health["score"].as_u64();
-                            if let Some(boundary_count) = health["violations"].as_u64() {
-                                if boundary_count > 0 {
-                                    println!(
-                                        "    {} Nexus boundary violations: {}",
-                                        "\u{26a0}".yellow(),
-                                        boundary_count.to_string().red()
-                                    );
-                                }
-                            }
-                        }
+                    }
+                    if result.violations.len() > 10 {
+                        println!("        … and {} more", result.violations.len() - 10);
                     }
                 }
+                println!(
+                    "    {} Analysed {} files, {} import edges",
+                    "\u{2713}".green(),
+                    result.file_count,
+                    result.edge_count
+                );
+                Some(result.health_score as u64)
             }
-        } else {
-            println!(
-                "    {} Nexus offline — run {} for deep analysis",
-                "\u{25cb}".dimmed(),
-                "hex nexus start".dimmed()
-            );
-        }
+            Err(e) => {
+                println!("    {} Deep analysis failed: {}", "\u{26a0}".yellow(), e);
+                None
+            }
+        };
 
-        // Compute final score and grade (nexus score takes precedence if available)
-        let score = nexus_score.unwrap_or_else(|| {
+        // Compute final score and grade. The tree-sitter score wins when the
+        // deep pass ran; the offline heuristic is the fallback.
+        let score = deep_score.unwrap_or_else(|| {
             let v = all_violation_count as u64;
             if v == 0 { 100 } else { 100u64.saturating_sub(v * 10) }
         });
-        let (letter, score_colored) = match score {
-            95..=100 => ("A+", format!("{}", score).bright_green().to_string()),
-            90..=94  => ("A",  format!("{}", score).green().to_string()),
-            80..=89  => ("B",  format!("{}", score).yellow().to_string()),
-            70..=79  => ("C",  format!("{}", score).yellow().to_string()),
-            60..=69  => ("D",  format!("{}", score).red().to_string()),
-            _        => ("F",  format!("{}", score).bright_red().to_string()),
+        let letter = grade_letter(score);
+        let score_colored = match score {
+            95..=100 => format!("{}", score).bright_green().to_string(),
+            90..=94 => format!("{}", score).green().to_string(),
+            80..=89 | 70..=79 => format!("{}", score).yellow().to_string(),
+            60..=69 => format!("{}", score).red().to_string(),
+            _ => format!("{}", score).bright_red().to_string(),
         };
 
         println!();
@@ -296,12 +294,25 @@ pub async fn run(
         );
     }
 
-    // ADR compliance check (ADR-045) — runs locally, no nexus needed
+    // Architectural-health detectors (ADR-2608241500 P6.5). Folded in from the
+    // hex-analyzer binary, which fed the improver daemon — and which nothing
+    // has run since the daemon went. They report; they do not gate.
+    if !violations_only && !quiet {
+        println!();
+        println!("  {}", "Architectural health:".bold());
+        for (label, count) in health_findings(&root) {
+            let icon = if count == 0 { "\u{2713}".green() } else { "\u{2022}".yellow() };
+            println!("    {} {:<18} {}", icon, label, count);
+        }
+    }
+
+    // ADR compliance check (ADR-045)
     if !violations_only {
         println!();
         println!("  {}", "ADR compliance:".bold());
     }
-    let adr_violations = check_adr_compliance(&root);
+    let compliance = check_adr_compliance(&root);
+    let adr_violations = &compliance.violations;
     let error_count = adr_violations.iter().filter(|v| v.severity == "error").count();
     let warning_count = adr_violations.iter().filter(|v| v.severity == "warning").count();
 
@@ -319,12 +330,19 @@ pub async fn run(
                 v.file, v.line, v.message,
             );
         }
-        for v in &adr_violations {
+        for v in adr_violations {
             println!(
                 "VIOLATION [{}] {}:{} — {}",
                 v.adr, v.file, v.line, v.message,
             );
         }
+    } else if let Some(reason) = &compliance.skipped {
+        // Not a pass. Say so in the words of the thing that did not happen.
+        println!(
+            "    {} ADR rules NOT CHECKED — {}",
+            "\u{25cb}".yellow(),
+            reason,
+        );
     } else if adr_violations.is_empty() {
         println!(
             "    {} All ADR rules satisfied",
@@ -338,7 +356,7 @@ pub async fn run(
             error_count,
             warning_count,
         );
-        for v in &adr_violations {
+        for v in adr_violations {
             let icon = if v.severity == "error" {
                 "\u{2717}".red()
             } else {
@@ -352,7 +370,6 @@ pub async fn run(
     }
 
     // Store compliance results in HexFlo memory (best-effort)
-    store_compliance_in_hexflo(&adr_violations, error_count, warning_count).await;
 
     let total_violations = all_violation_count + adr_violations.len();
 
@@ -381,6 +398,49 @@ pub async fn run(
 
 /// Analyze a single file for hex boundary violations.
 /// Used by PostToolUse hooks to check one file at a time.
+/// Run the six architectural-health detectors, returning `(label, count)`.
+///
+/// Counts only: the detail is large and belongs in `--json` or a dedicated
+/// report, and a wall of findings on every `hex analyze` trains people to
+/// ignore the whole section. A detector that errors reports 0 rather than
+/// failing the analysis — these are advisory.
+fn health_findings(root: &Path) -> Vec<(&'static str, usize)> {
+    use hex_analysis::analyzers::*;
+    vec![
+        ("cohesion", cohesion::analyze(root).map(|r| r.findings.len()).unwrap_or(0)),
+        ("duplication", duplication::analyze(root).map(|r| r.findings.len()).unwrap_or(0)),
+        (
+            "god types",
+            god_types::analyze(root, god_types::GodTypeThresholds::from_project_root(root))
+                .map(|r| r.findings.len())
+                .unwrap_or(0),
+        ),
+        ("dead layers", dead_layer::analyze(root).map(|r| r.findings.len()).unwrap_or(0)),
+        (
+            "orphans",
+            orphan::analyze(
+                root,
+                orphan::OrphanOptions { orphan_adapters: true, orphan_ports: true },
+            )
+            .map(|r| r.findings.len())
+            .unwrap_or(0),
+        ),
+    ]
+}
+
+/// Run the full tree-sitter boundary analysis over `root`.
+///
+/// `hex-analysis` is the crate that enforces the hexagonal rules this tool
+/// sells. Until now only the daemon depended on it, so deleting the daemon
+/// would have orphaned it and broken the verb P9.2 is measured on.
+pub async fn deep_analysis(
+    root: &Path,
+) -> Result<hex_analysis::domain::ArchAnalysisResult, hex_analysis::ports::AnalysisError> {
+    use hex_analysis::ports::ArchAnalysisPort;
+    let ast = std::sync::Arc::new(hex_analysis::treesitter_adapter::TreeSitterAdapter::new());
+    hex_analysis::analyzer::ArchAnalyzer::new(ast).analyze(root).await
+}
+
 fn run_single_file(
     file_path: &str,
     root: &Path,
@@ -972,7 +1032,7 @@ fn collect_rust_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Scan source files for boundary violations using `hex_core::rules::boundary`.
 ///
 /// This performs a lightweight offline check by inspecting Rust `use` and
-/// TypeScript `import` statements without needing tree-sitter or nexus.
+/// TypeScript `import` statements without needing tree-sitter.
 fn scan_local_violations(root: &Path) -> Vec<boundary::Violation> {
     let src = root.join("src");
     let mut all_violations = Vec::new();
@@ -1086,8 +1146,8 @@ fn extract_import_paths(source: &str, source_rel: &str) -> Vec<String> {
             cfg_test_armed = true;
         }
 
-        let opens = line.matches('{').count() as i32;
-        let closes = line.matches('}').count() as i32;
+        let opens = i32::try_from(line.matches('{').count()).unwrap_or(i32::MAX);
+        let closes = i32::try_from(line.matches('}').count()).unwrap_or(i32::MAX);
 
         if cfg_test_armed && opens > 0 {
             test_block_depth = Some(depth);
@@ -1192,7 +1252,120 @@ struct AdrRuleConfig {
 
 fn default_severity() -> String { "warning".to_string() }
 
-fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
+/// The result of an ADR compliance run, which is *not* the same thing as a
+/// list of violations.
+///
+/// An empty list means one of two opposite things: every rule passed, or no
+/// rule ran. Collapsing them is the silent-fallback failure this codebase has
+/// already made once — `hex ci`'s boundary check fell back to `cargo check`
+/// when its analyzer was unreachable and still printed a result, quietly
+/// turning "no boundary violations" into "it compiles". Reporting a green tick
+/// for a check that did not happen is the same bug in a smaller hat, and until
+/// this type existed `hex analyze` printed exactly that: "skipping compliance
+/// check" immediately followed by "✓ All ADR rules satisfied".
+struct AdrCompliance {
+    /// `None` when the rules ran. `Some(reason)` when they did not.
+    skipped: Option<String>,
+    violations: Vec<AdrViolationLocal>,
+}
+
+impl AdrCompliance {
+    fn skipped(reason: impl Into<String>) -> Self {
+        Self { skipped: Some(reason.into()), violations: Vec::new() }
+    }
+    fn ran(violations: Vec<AdrViolationLocal>) -> Self {
+        Self { skipped: None, violations }
+    }
+}
+
+/// Line numbers (0-based) that sit inside a `#[cfg(test)]` module.
+///
+/// Rust does not put its unit tests in a separate file, so a rule's
+/// path-based `exclude_patterns` cannot reach them: `worktree.rs` is not a
+/// test path, but the bottom third of it is nothing but tests. Without this,
+/// every fixture string in the workspace is reported as production code — a
+/// test asserting `detect_from_model_name("qwen3:32b")` was flagged as naming
+/// a model outside the inference boundary, which is the rule firing on the
+/// code that proves the rule's own subject works. A rule that flags correct
+/// code is worse than no rule: it teaches people to skim past the output.
+///
+/// **Indentation, not brace counting.** The first version of this counted
+/// braces and was immediately fooled by a `{` inside a string literal — it
+/// swallowed the remaining 300 lines of `init.rs` and silently switched every
+/// rule off for that file. Nothing reported an error; the violation count just
+/// went down, which looks exactly like progress. That is the silent-fallback
+/// failure this rule set exists to name, committed by the rule set's own
+/// engine.
+///
+/// `#[cfg(test)] mod tests { … }` closes with a `}` at the attribute's own
+/// indentation, which no string literal can imitate, because rustfmt owns the
+/// left margin.
+///
+/// If no matching close is found, this skips **nothing** for that attribute.
+/// A missed exclusion shows up as noise, which someone reads; an over-broad
+/// one shows up as silence, which nobody does.
+fn cfg_test_lines(content: &str) -> std::collections::HashSet<usize> {
+    let mut skip = std::collections::HashSet::new();
+    let lines: Vec<&str> = content.lines().collect();
+    let indent_of = |l: &str| l.len() - l.trim_start().len();
+
+    let mut i = 0;
+    while i < lines.len() {
+        if !lines[i].trim_start().starts_with("#[cfg(test)]") {
+            i += 1;
+            continue;
+        }
+        let want = indent_of(lines[i]);
+        let close = (i + 1..lines.len()).find(|&k| {
+            let t = lines[k].trim_start();
+            t.starts_with('}') && indent_of(lines[k]) == want
+        });
+        match close {
+            Some(k) => {
+                skip.extend(i..=k);
+                i = k + 1;
+            }
+            None => i += 1,
+        }
+    }
+    skip
+}
+
+#[cfg(test)]
+mod cfg_test_lines_tests {
+    use super::cfg_test_lines;
+
+    #[test]
+    fn it_skips_a_top_level_test_module_and_nothing_after_it() {
+        let src = "fn a() {}\n#[cfg(test)]\nmod t {\n    fn b() {}\n}\nfn c() {}\n";
+        let skip = cfg_test_lines(src);
+        assert!(!skip.contains(&0), "production code before the module");
+        for n in 1..=4 {
+            assert!(skip.contains(&n), "line {n} is inside the test module");
+        }
+        assert!(!skip.contains(&5), "production code after the module");
+    }
+
+    /// The regression that motivated the rewrite: a brace inside a string
+    /// literal must not extend the module to the end of the file.
+    #[test]
+    fn a_brace_in_a_string_does_not_swallow_the_rest_of_the_file() {
+        let src = "#[cfg(test)]\nmod t {\n    let s = \"{unclosed\";\n}\nfn after() {}\n";
+        let skip = cfg_test_lines(src);
+        assert!(skip.contains(&2), "the string line is inside the module");
+        assert!(!skip.contains(&4), "`fn after` is production code and must be scanned");
+    }
+
+    /// Loud over quiet: an unterminated module excludes nothing rather than
+    /// silently disabling every rule for the rest of the file.
+    #[test]
+    fn an_unterminated_module_skips_nothing() {
+        let src = "#[cfg(test)]\nmod t {\n    let _ = 1;\n";
+        assert!(cfg_test_lines(src).is_empty());
+    }
+}
+
+fn check_adr_compliance(root: &Path) -> AdrCompliance {
     // Load rules from project's .hex/ADR-rules.toml
     let rules_path = root.join(".hex").join("ADR-rules.toml");
     let rules = if rules_path.is_file() {
@@ -1208,21 +1381,23 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
                     parsed.adr_rules
                 }
                 Err(e) => {
-                    eprintln!(
-                        "    {} Failed to parse ADR-rules.toml: {}",
-                        "\u{2717}".red(), e
-                    );
-                    return Vec::new();
+                    return AdrCompliance::skipped(format!(
+                        "{} is present but does not parse: {e}",
+                        rules_path.strip_prefix(root).unwrap_or(&rules_path).display()
+                    ));
                 }
             },
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                return AdrCompliance::skipped(format!(
+                    "{} could not be read: {e}",
+                    rules_path.strip_prefix(root).unwrap_or(&rules_path).display()
+                ));
+            }
         }
     } else {
-        eprintln!(
-            "    {} No .hex/ADR-rules.toml found — skipping compliance check",
-            "\u{25cb}".dimmed()
+        return AdrCompliance::skipped(
+            "no .hex/ADR-rules.toml — run `hex init` to write the shipped rule set",
         );
-        return Vec::new();
     };
 
     let active_rules: Vec<&AdrRuleConfig> = rules
@@ -1231,15 +1406,24 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
         .collect();
 
     let mut violations = Vec::new();
-    let files = collect_source_files(&root.join("src"));
-
-    // Also scan hex-nexus/src if it exists (multi-crate projects)
-    let mut all_files = files;
-    for subdir in &["hex-nexus/src", "hex-cli/src"] {
-        let sub = root.join(subdir);
-        if sub.is_dir() {
-            all_files.extend(collect_source_files(&sub));
-        }
+    // Every `src/` in the project: the root one, plus one per crate or package
+    // in a workspace. This used to be a hardcoded list of two directory names,
+    // one of which named a crate that no longer exists — so in an eight-crate
+    // workspace the rules were checked against one crate and reported as
+    // though they had been checked against all of them.
+    let mut all_files = collect_source_files(&root.join("src"));
+    let mut members: Vec<PathBuf> = std::fs::read_dir(root)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path().join("src"))
+                .filter(|p| p.is_dir())
+                .collect()
+        })
+        .unwrap_or_default();
+    members.sort();
+    for sub in members {
+        all_files.extend(collect_source_files(&sub));
     }
 
     for path in &all_files {
@@ -1254,6 +1438,13 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
             Err(_) => continue,
         };
 
+        // Rust keeps its unit tests inline, so path exclusions miss them.
+        let inline_tests = if rel.ends_with(".rs") {
+            cfg_test_lines(&content)
+        } else {
+            std::collections::HashSet::new()
+        };
+
         for rule in &active_rules {
             if !rule.file_patterns.is_empty()
                 && !rule.file_patterns.iter().any(|p| rel.ends_with(p.as_str()))
@@ -1265,6 +1456,9 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
             }
 
             for (line_num, line) in content.lines().enumerate() {
+                if inline_tests.contains(&line_num) {
+                    continue;
+                }
                 let trimmed = line.trim();
                 if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
                     continue;
@@ -1285,47 +1479,59 @@ fn check_adr_compliance(root: &Path) -> Vec<AdrViolationLocal> {
         }
     }
 
-    violations
+    AdrCompliance::ran(violations)
 }
 
-/// Store ADR compliance results in HexFlo memory via nexus REST API.
-/// Best-effort: silently skips if nexus is not running.
-async fn store_compliance_in_hexflo(
-    violations: &[AdrViolationLocal],
-    error_count: usize,
-    warning_count: usize,
-) {
-    let nexus = NexusClient::from_env();
-    if nexus.ensure_running().await.is_err() {
-        return; // nexus not running — skip silently
+/// The letter for a 0..100 architecture score.
+///
+/// One table. `hex scaffold` gates on this and `hex analyze` prints it, and a
+/// verb that gates on a different table than the one the user is shown is a
+/// gate nobody can check.
+pub fn grade_letter(score: u64) -> &'static str {
+    match score {
+        95..=100 => "A+",
+        90..=94 => "A",
+        80..=89 => "B",
+        70..=79 => "C",
+        60..=69 => "D",
+        _ => "F",
+    }
+}
+
+/// Rank a letter so grades can be compared. Higher is better.
+pub fn grade_rank(letter: &str) -> u8 {
+    match letter {
+        "A+" => 5,
+        "A" => 4,
+        "B" => 3,
+        "C" => 2,
+        "D" => 1,
+        _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod grade_tests {
+    use super::{grade_letter, grade_rank};
+
+    #[test]
+    fn every_band_maps_to_a_letter_and_the_letters_are_ordered() {
+        let mut previous = 0u8;
+        for score in 0..=100u64 {
+            let rank = grade_rank(grade_letter(score));
+            assert!(rank >= previous, "grade fell at score {score}");
+            previous = rank;
+        }
+        assert_eq!(grade_letter(100), "A+");
+        assert_eq!(grade_letter(94), "A");
+        assert_eq!(grade_letter(0), "F");
     }
 
-    let violation_details: Vec<serde_json::Value> = violations
-        .iter()
-        .map(|v| {
-            serde_json::json!({
-                "adr": v.adr,
-                "file": v.file,
-                "line": v.line,
-                "message": v.message,
-                "severity": v.severity,
-            })
-        })
-        .collect();
-
-    let payload = serde_json::json!({
-        "key": "ADR-compliance:default",
-        "value": serde_json::json!({
-            "violationCount": violations.len(),
-            "errorCount": error_count,
-            "warningCount": warning_count,
-            "violations": violation_details,
-            "checkedAt": chrono::Utc::now().to_rfc3339(),
-        }).to_string(),
-    });
-
-    // Best-effort POST — ignore errors
-    let _ = nexus.post("/api/hexflo/memory", &payload).await;
+    #[test]
+    fn an_unknown_letter_ranks_lowest_rather_than_passing_a_gate() {
+        assert_eq!(grade_rank("Z"), 0);
+        assert_eq!(grade_rank(""), 0);
+    }
 }
 
 /// JSON output mode for `hex analyze --json`.
@@ -1369,30 +1575,13 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             Vec::new()
         };
 
-        // Try nexus for score
-        let nexus = NexusClient::from_env();
+        // Full tree-sitter analysis, in-process (ADR-2608241500 P6.2).
         let mut score: Option<u64> = None;
         let mut boundary_errors: Vec<serde_json::Value> = Vec::new();
-        if nexus.ensure_running().await.is_ok() {
-            if let Ok(resp) = nexus.get("/api/projects").await {
-                if let Some(projects) = resp.get("projects").and_then(|p| p.as_array()) {
-                    let matching = projects.iter().find(|p| {
-                        p["rootPath"]
-                            .as_str()
-                            .map(|rp| root.to_string_lossy().contains(rp) || rp.contains(&*root.to_string_lossy()))
-                            .unwrap_or(false)
-                    });
-                    if let Some(project) = matching {
-                        let pid = project["id"].as_str().unwrap_or("-");
-                        let health_path = format!("/api/{}/health", pid);
-                        if let Ok(health) = nexus.get(&health_path).await {
-                            score = health["score"].as_u64();
-                            if let Some(v) = health["violations"].as_u64() {
-                                boundary_errors.push(serde_json::json!({"count": v}));
-                            }
-                        }
-                    }
-                }
+        if let Ok(deep) = deep_analysis(root).await {
+            score = Some(deep.health_score as u64);
+            if !deep.violations.is_empty() {
+                boundary_errors.push(serde_json::json!({"count": deep.violations.len()}));
             }
         }
 
@@ -1410,7 +1599,8 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
     }
 
     // ADR compliance
-    let adr_violations = check_adr_compliance(root);
+    let compliance = check_adr_compliance(root);
+    let adr_violations = &compliance.violations;
     let error_count = adr_violations.iter().filter(|v| v.severity == "error").count();
     let warning_count = adr_violations.iter().filter(|v| v.severity == "warning").count();
 
@@ -1427,7 +1617,11 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
         })
         .collect();
 
+    // `checked` is the field that keeps a consumer from reading
+    // violation_count: 0 as a pass when nothing ran.
     result["adr_compliance"] = serde_json::json!({
+        "checked": compliance.skipped.is_none(),
+        "skipped_reason": compliance.skipped,
         "violation_count": adr_violations.len(),
         "error_count": error_count,
         "warning_count": warning_count,
@@ -1435,7 +1629,6 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
     });
 
     // Best-effort store in HexFlo
-    store_compliance_in_hexflo(&adr_violations, error_count, warning_count).await;
 
     println!("{}", serde_json::to_string_pretty(&result)?);
 

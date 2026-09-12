@@ -1,0 +1,112 @@
+# hex architecture rules
+# - [rules]           read by `hex enforce check-file` (forbidden path patterns)
+# - [[hex_layer_rules]] read by `hex enforce check-file` (layer boundary rules)
+# - [[adr_rules]]     read by `hex analyze` (ADR compliance violation patterns)
+#
+# path_pattern is an unanchored substring match (see hex_core::rules::boundary),
+# so these match regardless of language or package-name nesting under src/ —
+# e.g. "/domain/" matches both "src/domain/foo.ts" and "src/mypkg/core/domain/foo.py",
+# while the trailing slash avoids false positives like "src/domainxyz/foo.py".
+
+[rules]
+forbidden_paths = ["node_modules", ".git", "dist", ".env", "target"]
+
+[[hex_layer_rules]]
+path_pattern = "/adapters/primary/"
+layer = "adapters/primary"
+
+[[hex_layer_rules]]
+path_pattern = "/adapters/secondary/"
+layer = "adapters/secondary"
+
+[[hex_layer_rules]]
+path_pattern = "/domain/"
+layer = "domain"
+
+[[hex_layer_rules]]
+path_pattern = "/ports/"
+layer = "ports"
+
+[[hex_layer_rules]]
+path_pattern = "/usecases/"
+layer = "usecases"
+
+# ── Lessons, as rules ────────────────────────────────────────────────────
+#
+# Each rule below is a mistake that was actually made, in this codebase or in
+# code hex wrote, and then found the hard way. They are rules rather than prose
+# for the reason ADR-2026-09-11-1900 gives: a document that cannot fail cannot
+# be trusted, because nothing separates it from a document that is wrong.
+#
+# `hex analyze .` runs them. Delete any that do not fit your project — but
+# delete them deliberately, and read the message first.
+
+[[adr_rules]]
+adr = "ADR-2026-09-11-1900"
+id = "no-hardcoded-absolute-path"
+message = "Hardcoded absolute path. hex's own code_patch tool defaulted its repo root to the literal \"/home/gary/hex-intf\"; on every other machine it wrote outside the repository and no test noticed. Resolve from the working directory or an environment variable."
+severity = "error"
+file_patterns = [".rs", ".go", ".ts", ".tsx"]
+exclude_patterns = ["test", "_test.", ".test.", "example"]
+violation_patterns = ["\"/home/", "\"/Users/", "\"C:\\\\Users"]
+
+[[adr_rules]]
+adr = "ADR-2026-09-11-1900"
+id = "no-hardcoded-host-port"
+message = "Hardcoded host:port. This is how a tool acquires a daemon dependency it never decided to have — hex ended up with 51 of 91 command files reaching 127.0.0.1:5555, and deleting the daemon meant touching every one. Put the address in config."
+severity = "warning"
+file_patterns = [".rs", ".go", ".ts", ".tsx"]
+exclude_patterns = ["test", "_test.", ".test.", "config", "example", "infer"]
+violation_patterns = ["127.0.0.1:", "localhost:", "0.0.0.0:"]
+
+[[adr_rules]]
+adr = "ADR-2026-09-11-1900"
+id = "no-model-name-outside-inference"
+message = "A model or provider name outside the inference boundary. A caller that names a model cannot be re-pointed by editing configuration, which is exactly the property model-independence means. Read the tier from config instead."
+severity = "error"
+file_patterns = [".rs", ".go", ".ts", ".tsx"]
+exclude_patterns = ["infer", "inference", "test", "_test.", ".test.", "config"]
+violation_patterns = ["gpt-4", "gpt-5", "claude-3", "claude-4", "qwen", "llama-3", "mistral", "ollama"]
+
+[[adr_rules]]
+adr = "ADR-2026-09-11-1900"
+id = "narrowing-cast-needs-a-check"
+message = "Narrowing `as` cast. An integer `as` silently truncates: hex wrote a rate limiter whose burst check overflowed a u128 and produced a limiter that never limited, and its own health score wrapped a penalty of 260 to 4, so the worst code in the repository scored 96/100 and the score ROSE as violations were added. Use try_from. NOTE: a float-to-int `as` saturates rather than truncating, and has no try_from — this rule cannot tell the two apart, so if the source is a float, give the cast a named function and move on."
+severity = "warning"
+file_patterns = [".rs"]
+exclude_patterns = ["test", "_test."]
+violation_patterns = [" as u8", " as u16", " as u32", " as i8", " as i16", " as i32"]
+
+[[adr_rules]]
+adr = "ADR-2026-09-11-1900"
+id = "no-innerhtml-with-data"
+message = "innerHTML assigns markup, not text. Any value that has been near a user is now executable. Use textContent or createElement."
+severity = "error"
+file_patterns = [".ts", ".tsx", ".js", ".jsx"]
+exclude_patterns = ["test", ".test.", ".spec."]
+violation_patterns = ["innerHTML", "outerHTML", "insertAdjacentHTML"]
+
+[[adr_rules]]
+adr = "ADR-2026-09-11-1900"
+id = "test-must-not-redefine-its-subject"
+message = "A type declared inside a test file. hex carried 30 tests across \"all 8 phases\" of one ADR that imported nothing but std — the subject was redefined in the test file, so every assertion held against a copy of the design rather than the shipped code. Deleting them cost no coverage. Import the real type."
+severity = "warning"
+file_patterns = ["_test.go", ".test.ts", ".spec.ts"]
+exclude_patterns = []
+violation_patterns = ["\ntype ", "\nclass ", "\nstruct "]
+
+# A rule that was written and then removed, which is worth recording:
+#
+#   id = "no-silent-fallback-in-a-gate"
+#   violation_patterns = ["unwrap_or(true)", "unwrap_or_else(|_| true)"]
+#
+# The lesson is real — hex's CI boundary check fell back to `cargo check` when
+# its analyzer was unreachable, quietly turning "no boundary violations" into
+# "it compiles" while still printing a result. But no pattern separates that
+# from an ordinary default for an optional flag, and in this codebase every
+# single hit was the ordinary kind: `task.isolate.unwrap_or(true)`,
+# `fail_on_violations … .unwrap_or(true)`.
+#
+# A rule that flags correct code is worse than no rule, because it teaches
+# people to skim past the output. The lesson lives in CLAUDE.md instead, where
+# prose is the honest form for something a machine cannot check.

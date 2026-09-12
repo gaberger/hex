@@ -136,7 +136,7 @@ impl Tool for ModuleRegister {
 
         // Validate that the target file exists
         let repo_root = std::env::var("HEX_REPO_ROOT")
-            .unwrap_or_else(|_| "/home/user/hex-intf".to_string());
+            .unwrap_or_else(|_| crate::repo_root());
         let target_file = std::path::Path::new(&repo_root).join(path);
         if !target_file.exists() {
             return ToolResult::err(

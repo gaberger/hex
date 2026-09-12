@@ -5,7 +5,7 @@
 //! that makes a project hex-aware.
 //!
 //! Two modes:
-//! - **Config-only** (default): `.hex/`, `.claude/`, `.mcp.json`, `CLAUDE.md`
+//! - **Config-only** (default): `.hex/`, `.claude/`, `CLAUDE.md`
 //! - **Scaffold** (`--scaffold`): Also creates `src/` hex layer directories
 //!
 //! ## Template sourcing
@@ -41,9 +41,13 @@ pub struct InitArgs {
     #[arg(short, long)]
     pub name: Option<String>,
 
-    /// Also create src/ hexagonal layer directories
+    /// Also write a runnable hexagonal skeleton (see --lang)
     #[arg(long)]
     pub scaffold: bool,
+
+    /// Scaffold language: rust | go | ts
+    #[arg(long, default_value = "rust")]
+    pub lang: String,
 
     /// Skip creating CLAUDE.md (if you already have one)
     #[arg(long)]
@@ -110,12 +114,8 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // ── 1c. .hex/ADR-rules.toml (enforcement rules) ───────────────
     create_adr_rules_toml(&target)?;
 
-    // ── 2. .mcp.json ─────────────────────────────────────────────
-    create_mcp_json(&target)?;
-
     // ── 3. .claude/settings.json (hooks → hex hook <event>) ──────
     create_claude_settings(&target)?;
-    install_statusline_script(&target)?;
 
     // ── 4. CLAUDE.md ──────────────────────────────────────────────
     if !args.no_claude_md {
@@ -127,7 +127,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     // ── 6. Scaffold (optional) ────────────────────────────────────
     if args.scaffold {
-        create_scaffold(&target)?;
+        create_scaffold(&target, &args.lang, &project_name)?;  // count reported inside
     }
 
     // ── 6a. git init + initial commit ─────────────────────────────
@@ -137,18 +137,18 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // missing git binary or an already-initialized repo just skips silently.
     let git_committed = ensure_git_initialized_and_committed(&target, &project_name);
 
-    // ── 7. Pull embedded templates from hex-nexus (skills, agents, hooks) ──
-    let nexus_result = pull_templates_from_nexus(&target, &project_name).await;
-
-    // ── 8. Register project in SpacetimeDB (ADR-065 P4) ─────────
-    let register_result: Result<String> = register_project_in_nexus(&target, &project_name).await;
+    // ── 7. Write the embedded templates (skills, agents, hooks) ──
+    // These are baked into this binary by rust-embed. `hex init` used to ask
+    // the daemon for them over /api/projects/init — and the daemon served a
+    // copy it had re-embedded from the same source tree. Extraction never
+    // overwrites, so an operator's edits survive a re-init.
+    let templates = extract_templates(&target);
 
     // ── Summary ───────────────────────────────────────────────────
     println!();
     println!("  {} .hex/project.json", "\u{2713}".green());
     println!("  {} .hex/project.yaml (auto-register manifest)", "\u{2713}".green());
     println!("  {} .hex/ADR-rules.toml (enforcement rules)", "\u{2713}".green());
-    println!("  {} .mcp.json", "\u{2713}".green());
     println!("  {} .claude/settings.json", "\u{2713}".green());
     if !args.no_claude_md {
         println!("  {} CLAUDE.md", "\u{2713}".green());
@@ -161,7 +161,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
         println!("  {} git init + initial commit", "\u{2713}".green());
     }
 
-    match &nexus_result {
+    match &templates {
         Ok(created) => {
             let skills = created.iter().filter(|f| f.contains("/skills/")).count();
             let agents = created.iter().filter(|f| f.contains("/agents/")).count();
@@ -187,24 +187,6 @@ pub async fn run(args: InitArgs) -> Result<()> {
         }
     }
 
-    // ADR-065 P4: show project registration status
-    match &register_result {
-        Ok(pid) => {
-            println!("  {} SpacetimeDB project registered ({})", "\u{2713}".green(), &pid[..8.min(pid.len())]);
-            // ADR-2026-03-30-1200: Generate architecture fingerprint on init so it's available
-            // immediately in Claude Code sessions and the first `hex dev` run.
-            let nexus = crate::nexus_client::NexusClient::from_env();
-            let fp_body = serde_json::json!({
-                "project_root": target.display().to_string(),
-                "workplan_path": "",
-            });
-            match nexus.post_long(&format!("/api/projects/{}/fingerprint", pid), &fp_body).await {
-                Ok(_) => println!("  {} Architecture fingerprint generated", "\u{2713}".green()),
-                Err(_) => println!("  {} Fingerprint: will generate on first `hex dev` run", "\u{2022}".dimmed()),
-            }
-        }
-        Err(_) => println!("  {} SpacetimeDB: project will register on first agent connect", "\u{2022}".dimmed()),
-    }
 
     println!();
     println!(
@@ -214,13 +196,12 @@ pub async fn run(args: InitArgs) -> Result<()> {
     );
     println!();
     println!("  Next steps:");
-    if nexus_result.is_err() {
-        println!("    {} Start hex-nexus:      hex nexus start", "\u{2022}".dimmed());
-        println!("    {} Install templates:    hex init --force", "\u{2022}".dimmed());
+    if let Err(e) = &templates {
+        println!("    {} Retry templates:      hex init --force  ({e})", "\u{2022}".dimmed());
     }
-    println!("    {} Calibrate models:     hex inference setup", "\u{2022}".dimmed());
+    println!("    {} Calibrate models:     hex config inference setup", "\u{2022}".dimmed());
     println!("    {} Check architecture:   hex analyze .", "\u{2022}".dimmed());
-    println!("    {} Start the dashboard:  hex nexus start", "\u{2022}".dimmed());
+    println!("    {} Do some work:         hex do run \"<task>\" --file <f> --evidence \"<cmd>\"", "\u{2022}".dimmed());
     if !args.scaffold {
         println!("    {} Scaffold src/ dirs:   hex init --scaffold .", "\u{2022}".dimmed());
     }
@@ -303,35 +284,6 @@ agent:
     Ok(())
 }
 
-pub fn create_mcp_json(target: &Path) -> Result<()> {
-    let mcp_path = target.join(".mcp.json");
-
-    // If .mcp.json exists, merge our server in rather than overwriting
-    let mut mcp: serde_json::Value = if mcp_path.exists() {
-        let existing = fs::read_to_string(&mcp_path)?;
-        serde_json::from_str(&existing).unwrap_or_else(|_| serde_json::json!({"mcpServers": {}}))
-    } else {
-        serde_json::json!({"mcpServers": {}})
-    };
-
-    // Add hex server entry — delegates to the hex binary on PATH.
-    // toolSearch enables BM25 on-demand tool discovery so only needed
-    // tool schemas enter context (not all 50+ hex tools upfront).
-    mcp["mcpServers"]["hex"] = serde_json::json!({
-        "command": "hex",
-        "args": ["mcp"],
-        "toolSearch": {
-            "type": "tool_search_tool_bm25_20251119",
-            "enabled": true
-        }
-    });
-
-    fs::write(&mcp_path, serde_json::to_string_pretty(&mcp)?)
-        .context("Failed to write .mcp.json")?;
-
-    Ok(())
-}
-
 /// Load the embedded settings template (ADR-2026-03-22-1522).
 fn settings_template() -> String {
     crate::assets::Assets::get_str("templates/hex-claude-settings.json")
@@ -386,8 +338,11 @@ fn create_claude_md(target: &Path, project_name: &str) -> Result<()> {
     // Don't overwrite existing CLAUDE.md — append hex rules instead
     if claude_md_path.exists() {
         let existing = fs::read_to_string(&claude_md_path)?;
-        if existing.contains("Hexagonal Architecture Rules") {
-            // Already has hex rules, skip
+        if existing.contains(super::refresh::START_MARKER)
+            || existing.contains("Hexagonal Architecture Rules")
+        {
+            // Already carries a hex section. `hex refresh` updates it; init
+            // must not append a second copy.
             return Ok(());
         }
         // Append hex section
@@ -423,66 +378,195 @@ fn create_claude_md(target: &Path, project_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// The hex-managed section, already wrapped in its refresh markers.
+///
+/// Written wrapped so `hex refresh` can replace it later as a pure span swap.
+/// A bare section leaves the file with no marker and no legacy heading, and
+/// refresh correctly refuses to guess where a hand-written file ends.
 fn hex_claude_md_section() -> String {
-    crate::assets::Assets::get_str("templates/claude-md-hex-section.md")
-        .expect("claude-md-hex-section.md must be embedded in assets/templates/")
+    super::refresh::wrapped_hex_section()
 }
 
-/// Copy the embedded `hex-statusline.cjs` helper into `<target>/scripts/`
-/// so the `.claude/settings.json` statusLine config (`node scripts/hex-statusline.cjs`)
-/// finds a real file. Without this, Claude Code's statusline silently no-ops.
-pub fn install_statusline_script(target: &Path) -> Result<()> {
-    let scripts_dir = target.join("scripts");
-    create_dir_if_missing(&scripts_dir)?;
-    let dest = scripts_dir.join("hex-statusline.cjs");
-    let content = crate::assets::Assets::get_str("helpers/hex-statusline.cjs")
-        .expect("helpers/hex-statusline.cjs must be embedded in assets/");
-    fs::write(&dest, content)
-        .with_context(|| format!("writing {}", dest.display()))?;
-    Ok(())
+/// The languages `--scaffold` can emit, and the command that gates each one.
+///
+/// The gate is part of the scaffold's identity, not an afterthought: a
+/// skeleton you cannot run is a skeleton you cannot check, and gate-first
+/// development (ADR-2026-09-11-1900) has nothing to start from.
+pub const SCAFFOLD_LANGS: &[(&str, &str)] = &[
+    ("rust", "cargo test"),
+    ("go", "go test ./..."),
+    ("ts", "npm install && npm test"),
+];
+
+/// The gate command for a language, or `None` if it is not one we emit.
+pub fn scaffold_gate(lang: &str) -> Option<&'static str> {
+    SCAFFOLD_LANGS.iter().find(|(l, _)| *l == lang).map(|(_, g)| *g)
 }
 
-fn create_scaffold(target: &Path) -> Result<()> {
-    let dirs = [
-        "src/core/domain",
-        "src/core/ports",
-        "src/core/usecases",
-        "src/adapters/primary",
-        "src/adapters/secondary",
-        "tests/unit",
-        "tests/integration",
-    ];
+/// Write a runnable hexagonal skeleton for `lang` into `target`.
+///
+/// **Deterministic by construction.** Every byte comes from a template
+/// embedded in this binary plus two substitutions derived from the project
+/// name. No inference, no network, no clock, no filesystem scan — the same
+/// name produces the same bytes on every machine, which is what makes the
+/// output something you can gate.
+///
+/// It used to create eleven empty directories and one TypeScript file of
+/// TODO comments: no manifest, no test runner, nothing to execute. That is
+/// the gap this closes.
+///
+/// Existing files are never overwritten, so re-running `hex init --scaffold`
+/// on a live project is safe.
+pub(crate) fn create_scaffold(target: &Path, lang: &str, project_name: &str) -> Result<usize> {
+    let Some(gate) = scaffold_gate(lang) else {
+        anyhow::bail!(
+            "unknown --lang '{}'; expected one of: {}",
+            lang,
+            SCAFFOLD_LANGS.iter().map(|(l, _)| *l).collect::<Vec<_>>().join(", ")
+        );
+    };
 
-    for dir in &dirs {
-        create_dir_if_missing(&target.join(dir))?;
+    let prefix = format!("scaffold/{lang}/");
+    let vars = ScaffoldVars::from_name(project_name);
+    let mut written = 0usize;
+    // Counted separately from `written`, because "every file was already there"
+    // and "this language ships no templates" are opposite conditions that both
+    // leave `written` at zero. Reporting the first as the second sent a reader
+    // looking for a missing asset bundle that was present and complete.
+    let mut found = 0usize;
+
+    for path in crate::assets::Assets::iter() {
+        let Some(rel) = path.strip_prefix(&prefix) else {
+            continue;
+        };
+        // `.tmpl` marks a file whose *name* would otherwise be picked up by a
+        // build tool sitting in the assets tree. The suffix is dropped here.
+        let rel = rel.strip_suffix(".tmpl").unwrap_or(rel);
+        found += 1;
+        let dest = target.join(rel);
+        if dest.exists() {
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            create_dir_if_missing(parent)?;
+        }
+        let body = crate::assets::Assets::get_str(&path)
+            .ok_or_else(|| anyhow::anyhow!("scaffold asset {path} is not embedded"))?;
+        fs::write(&dest, vars.render(&body))
+            .with_context(|| format!("writing {}", dest.display()))?;
+        written += 1;
     }
 
-    // Create composition-root.ts if it doesn't exist
-    let comp_root = target.join("src/composition-root.ts");
-    if !comp_root.exists() {
-        fs::write(
-            &comp_root,
-            r#"/**
- * Composition Root — the ONLY file that crosses adapter boundaries.
- *
- * This file wires concrete adapters to port interfaces.
- * No other file should import from adapters/ directly.
- */
-
-// TODO: Wire your adapters to ports here
-// import { MyPort } from './core/ports/my-port.js';
-// import { MyAdapter } from './adapters/secondary/my-adapter.js';
-//
-// export const myPort: MyPort = new MyAdapter();
-"#,
-        )
-        .context("Failed to write composition-root.ts")?;
+    if found == 0 {
+        anyhow::bail!("no scaffold assets embedded for --lang {lang}");
     }
-
-    Ok(())
+    if written == 0 {
+        return Ok(0);
+    }
+    println!("  {} {} files ({}) — gate: {}", "\u{2713}".green(), written, lang, gate);
+    Ok(written)
 }
 
-fn create_adr_rules_toml(target: &Path) -> Result<()> {
+/// The substitutions a scaffold template may use.
+///
+/// Two, deliberately. `{{name}}` is the project as written; `{{name_snake}}`
+/// is it as an identifier, because Rust crate paths and Go package names
+/// cannot contain a hyphen while directory names routinely do.
+struct ScaffoldVars {
+    name: String,
+    name_snake: String,
+}
+
+impl ScaffoldVars {
+    fn from_name(name: &str) -> Self {
+        let snake: String = name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+            .collect();
+        // An identifier may not start with a digit, and an empty one is not an
+        // identifier at all.
+        let snake = match snake.chars().next() {
+            Some(c) if c.is_ascii_digit() => format!("p_{snake}"),
+            None => "app".to_string(),
+            _ => snake,
+        };
+        Self { name: name.to_string(), name_snake: snake }
+    }
+
+    fn render(&self, body: &str) -> String {
+        body.replace("{{name_snake}}", &self.name_snake).replace("{{name}}", &self.name)
+    }
+}
+
+#[cfg(test)]
+mod scaffold_tests {
+    use super::*;
+
+    #[test]
+    fn every_language_declares_a_gate() {
+        for (lang, gate) in SCAFFOLD_LANGS {
+            assert!(!gate.is_empty(), "{lang} has no gate command");
+            assert_eq!(scaffold_gate(lang), Some(*gate));
+        }
+        assert_eq!(scaffold_gate("cobol"), None);
+    }
+
+    #[test]
+    fn a_hyphenated_name_becomes_a_legal_identifier() {
+        let v = ScaffoldVars::from_name("my-cool-app");
+        assert_eq!(v.name, "my-cool-app", "the name is kept as written");
+        assert_eq!(v.name_snake, "my_cool_app", "the identifier cannot hold a hyphen");
+    }
+
+    #[test]
+    fn an_identifier_never_starts_with_a_digit() {
+        assert_eq!(ScaffoldVars::from_name("2048-game").name_snake, "p_2048_game");
+    }
+
+    #[test]
+    fn an_empty_name_still_yields_an_identifier() {
+        assert_eq!(ScaffoldVars::from_name("").name_snake, "app");
+    }
+
+    #[test]
+    fn the_longer_placeholder_is_substituted_first() {
+        // Replacing `{{name}}` first would leave `_snake` dangling inside
+        // `{{name_snake}}`. Order matters and this pins it.
+        let v = ScaffoldVars::from_name("my-app");
+        assert_eq!(v.render("{{name_snake}}"), "my_app");
+        assert_eq!(v.render("mod {{name_snake}}; // {{name}}"), "mod my_app; // my-app");
+    }
+
+    #[test]
+    fn rendering_is_deterministic() {
+        let a = ScaffoldVars::from_name("demo").render("{{name}}/{{name_snake}}");
+        let b = ScaffoldVars::from_name("demo").render("{{name}}/{{name_snake}}");
+        assert_eq!(a, b);
+    }
+
+    /// Every template must be embedded, and every one must render without
+    /// leaving a placeholder behind — an unsubstituted `{{…}}` in emitted
+    /// source is a syntax error in all three languages.
+    #[test]
+    fn no_template_leaves_a_placeholder() {
+        let vars = ScaffoldVars::from_name("demo-app");
+        let mut seen = 0;
+        for path in crate::assets::Assets::iter() {
+            // Only the language trees. Anything else under `scaffold/` is not
+            // a scaffold template and does not go through this substitution.
+            if !SCAFFOLD_LANGS.iter().any(|(l, _)| path.starts_with(&format!("scaffold/{l}/"))) {
+                continue;
+            }
+            let body = crate::assets::Assets::get_str(&path).expect("embedded");
+            let out = vars.render(&body);
+            assert!(!out.contains("{{"), "{path} still contains a placeholder");
+            seen += 1;
+        }
+        assert!(seen >= 20, "expected the three scaffold trees to be embedded, saw {seen}");
+    }
+}
+
+pub(crate) fn create_adr_rules_toml(target: &Path) -> Result<()> {
     let hex_dir = target.join(".hex");
     create_dir_if_missing(&hex_dir)?;
 
@@ -492,48 +576,8 @@ fn create_adr_rules_toml(target: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let content = r#"# hex architecture rules
-# - [rules]           read by `hex enforce check-file` (forbidden path patterns)
-# - [[hex_layer_rules]] read by `hex enforce check-file` (layer boundary rules)
-# - [[adr_rules]]     read by `hex analyze` (ADR compliance violation patterns)
-#
-# path_pattern is an unanchored substring match (see hex_core::rules::boundary),
-# so these match regardless of language or package-name nesting under src/ —
-# e.g. "/domain/" matches both "src/domain/foo.ts" and "src/mypkg/core/domain/foo.py",
-# while the trailing slash avoids false positives like "src/domainxyz/foo.py".
-
-[rules]
-forbidden_paths = ["node_modules", ".git", "dist", ".env", "target"]
-
-[[hex_layer_rules]]
-path_pattern = "/adapters/primary/"
-layer = "adapters/primary"
-
-[[hex_layer_rules]]
-path_pattern = "/adapters/secondary/"
-layer = "adapters/secondary"
-
-[[hex_layer_rules]]
-path_pattern = "/domain/"
-layer = "domain"
-
-[[hex_layer_rules]]
-path_pattern = "/ports/"
-layer = "ports"
-
-[[hex_layer_rules]]
-path_pattern = "/usecases/"
-layer = "usecases"
-
-# Example ADR compliance rule (uncomment and customize):
-# [[adr_rules]]
-# adr = "ADR-001"
-# id = "no-direct-db-in-domain"
-# message = "Domain must not import database adapters directly"
-# severity = "error"
-# file_patterns = ["src/domain/**"]
-# violation_patterns = ["import.*adapters/secondary"]
-"#;
+    let content = crate::assets::Assets::get_str("templates/ADR-rules.toml")
+        .expect("templates/ADR-rules.toml must be embedded in assets/templates/");
 
     fs::write(&rules_path, content)
         .context("Failed to write .hex/ADR-rules.toml")?;
@@ -608,9 +652,23 @@ fn ensure_git_initialized_and_committed(target: &Path, project_name: &str) -> bo
     }
 }
 
-/// Lightweight init for `hex dev` — creates `.hex/project.json` and registers
-/// with nexus. Skips interview, MCP config, claude settings, and scaffolding.
-/// This ensures every dev session has a project_id for traceability.
+/// Write the embedded `skills/`, `agents/` and `hooks/` templates into
+/// `.claude/`, returning the paths created.
+///
+/// Never overwrites: an existing file is a customisation, not a stale copy.
+fn extract_templates(target: &Path) -> std::io::Result<Vec<String>> {
+    use crate::assets::Assets;
+    let claude = target.join(".claude");
+    let mut created = Vec::new();
+    for (prefix, dir) in [("skills/", "skills"), ("agents/", "agents"), ("hooks/", "hooks")] {
+        created.extend(Assets::extract_to(prefix, &claude.join(dir))?);
+    }
+    Ok(created)
+}
+
+/// Lightweight init — creates `.hex/project.json` and nothing else. Skips the
+/// interview, claude settings, and scaffolding, so every project has an id for
+/// traceability without a full `hex init`.
 pub async fn run_init_in(dir: &str, name: &str) -> Result<()> {
     let target = PathBuf::from(dir);
     fs::create_dir_all(&target)?;
@@ -632,79 +690,6 @@ pub async fn run_init_in(dir: &str, name: &str) -> Result<()> {
 
     create_project_json(&target, &project_name)?;
 
-    // Best-effort nexus registration — non-fatal if nexus is unavailable
-    match register_project_in_nexus(&target, &project_name).await {
-        Ok(id) => {
-            println!(
-                "  {} Project registered: {} ({})",
-                "\u{2713}".green(),
-                project_name,
-                id,
-            );
-        }
-        Err(e) => {
-            tracing::debug!("Project registration skipped (non-fatal): {e}");
-        }
-    }
-
     Ok(())
 }
 
-/// ADR-065 P4: Register project in SpacetimeDB via nexus so it appears in the
-/// dashboard immediately. If nexus is offline, silently skip — the project will
-/// be registered on first agent connect (ADR-065 P1).
-async fn register_project_in_nexus(target: &Path, name: &str) -> Result<String> {
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let body = serde_json::json!({
-        "name": name,
-        "rootPath": target.to_string_lossy(),
-    });
-
-    let resp = nexus.post("/api/projects/register", &body).await?;
-
-    // Server assigns the canonical ID (slug-based). Update .hex/project.json
-    // so read_project_id_in() returns the nexus-registered ID, not the local UUID.
-    let server_id = resp["id"].as_str().unwrap_or_default().to_string();
-    if !server_id.is_empty() {
-        let project_json_path = target.join(".hex/project.json");
-        if project_json_path.exists() {
-            let content = fs::read_to_string(&project_json_path)?;
-            let mut parsed: serde_json::Value = serde_json::from_str(&content)?;
-            parsed["id"] = serde_json::Value::String(server_id.clone());
-            fs::write(&project_json_path, serde_json::to_string_pretty(&parsed)?)
-                .context("Failed to update .hex/project.json with server ID")?;
-        }
-    }
-
-    Ok(server_id)
-}
-
-/// Pull embedded skills, agents, and hooks from hex-nexus via its REST API.
-///
-/// Returns the list of files created by nexus, or an error if nexus is unreachable.
-async fn pull_templates_from_nexus(target: &Path, name: &str) -> Result<Vec<String>> {
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let body = serde_json::json!({
-        "path": target.to_string_lossy(),
-        "name": name,
-    });
-
-    let resp = nexus.post("/api/projects/init", &body).await?;
-
-    // The nexus endpoint returns { "created": ["file1", "file2", ...] }
-    let created: Vec<String> = resp
-        .get("created")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    Ok(created)
-}

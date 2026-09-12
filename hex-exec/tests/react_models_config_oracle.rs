@@ -22,11 +22,11 @@ fn explicit_overrides_config() {
     let cfg = json!({ "inference": { "react_models": ["a", "b"] } });
     assert_eq!(react_models_from_config_value(&cfg, Some("z")), s(&["z"]));
 }
+/// An empty config yields no candidates. See the sibling oracle in
+/// `candidate_models_oracle.rs`: a hardcoded last-resort model is founding
+/// goal G1's failure case, because configuration can no longer re-point it.
 #[test]
-fn default_pair_when_empty() {
+fn empty_config_yields_no_candidates() {
     let cfg = json!({});
-    assert_eq!(
-        react_models_from_config_value(&cfg, None),
-        s(&["devstral-small-2:24b", "qwen2.5-coder:14b"])
-    );
+    assert_eq!(react_models_from_config_value(&cfg, None), Vec::<String>::new());
 }

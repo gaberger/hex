@@ -21,10 +21,8 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DirectTask {
@@ -88,7 +86,7 @@ const RUN_HISTORY: usize = 200;
 /// One recorded agent run — the monitorable unit of the new model. Shared by the
 /// direct executor and any other in-nexus agent (e.g. adr-steward) so they all
 /// surface in one dashboard feed.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirectRun {
     pub id: u64,
     /// Which agent produced this run ("direct-executor", "adr-steward", ...).
@@ -171,19 +169,17 @@ pub(crate) fn record_react_run(
     store_run(run);
 }
 
-/// Push a run into the in-memory feed (fast path for the API) AND persist it to
-/// SpacetimeDB (so the feed survives nexus restarts).
+/// Persist a run to the local store.
+///
+/// There is no in-memory ring buffer any more. It was the fast path for a
+/// daemon's HTTP API, and a cache in front of a file that only a short-lived
+/// process reads is not a cache — it is a way to report zero runs while the
+/// file holds every one of them. Never fails a run: losing a feed entry must
+/// not lose an edit.
 fn store_run(run: DirectRun) {
-    persist_run_async(run.clone());
-    if let Ok(mut q) = RUNS.lock() {
-        q.push_front(run);
-        while q.len() > RUN_HISTORY {
-            q.pop_back();
-        }
-    }
+    persist_run_async(run);
 }
 
-static RUNS: LazyLock<Mutex<VecDeque<DirectRun>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
 static RUN_ID: AtomicU64 = AtomicU64::new(1);
 
 // Serialize the read→edit→evidence→commit critical section. Two concurrent runs
@@ -192,13 +188,133 @@ static RUN_ID: AtomicU64 = AtomicU64::new(1);
 // review swarm. Global (not per-file) because git add/commit is process-global.
 static EXEC_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-/// A `cargo test <filter>` matching zero tests exits 0 with "running 0 tests" /
-/// "0 passed; 0 failed" — a vacuous pass. The gate must require the change to be
-/// actually exercised, so treat these as NOT satisfied.
+/// Did the evidence command actually exercise anything?
+///
+/// A `cargo test <filter>` matching zero tests exits 0 and prints "running 0
+/// tests" — a pass that verified nothing. The gate exists to require the change
+/// be *exercised*, so that is not satisfied.
+///
+/// **This counts across suites rather than matching one line.** The first
+/// version asked `output.contains("0 passed; 0 failed; 0 ignored")`, which is
+/// true of any multi-binary cargo run that happens to contain one empty target
+/// — a lib with no inline tests, a binary whose tests live in `tests/`. A real
+/// run of a scaffolded project, 39 tests passing across four binaries, was
+/// judged vacuous by that check and its commit would have been rejected. A gate
+/// that fails for a reason unrelated to what it gates is indistinguishable from
+/// the gated thing being broken.
+///
+/// Recognises cargo, `go test`, and node's TAP output. When it recognises
+/// nothing — a `make check`, a shell script — it returns `false`: we cannot
+/// judge, and rejecting every unrecognised runner would break more gates than
+/// it protects. That limit is real and is why this is a guard against the
+/// crudest case, not a proof of coverage.
 pub(crate) fn evidence_is_vacuous(output: &str) -> bool {
-    output.contains("running 0 tests")
-        || output.contains("0 passed; 0 failed; 0 ignored")
-        || output.contains("0 passed; 0 failed; 0 measured")
+    match tests_observed(output) {
+        Some(0) => true,
+        _ => false,
+    }
+}
+
+/// How many tests the output reports having run, or `None` if no runner we
+/// know about is recognisable in it.
+pub fn tests_observed(output: &str) -> Option<u64> {
+    let mut total: u64 = 0;
+    let mut recognised = false;
+
+    for line in output.lines() {
+        let t = line.trim();
+
+        // cargo: "test result: ok. 39 passed; 0 failed; …"
+        if let Some(rest) = t.strip_prefix("test result:") {
+            recognised = true;
+            if let Some(n) = rest.split_whitespace().find_map(|w| w.parse::<u64>().ok()) {
+                total = total.saturating_add(n);
+            }
+            continue;
+        }
+        // cargo: "running 12 tests"
+        if let Some(rest) = t.strip_prefix("running ") {
+            if rest.ends_with(" tests") || rest.ends_with(" test") {
+                recognised = true;
+            }
+            continue;
+        }
+        // node --test TAP: "# pass 88"
+        if let Some(rest) = t.strip_prefix("# pass ") {
+            recognised = true;
+            if let Ok(n) = rest.trim().parse::<u64>() {
+                total = total.saturating_add(n);
+            }
+            continue;
+        }
+        // go: "ok  \tpkg\t0.01s" means the package's tests ran and passed;
+        // "?   \tpkg\t[no test files]" means it had none.
+        if t.starts_with("ok  \t") || t.starts_with("ok\t") {
+            recognised = true;
+            total = total.saturating_add(1);
+            continue;
+        }
+        if t.contains("[no test files]") {
+            recognised = true;
+            continue;
+        }
+        if t.starts_with("--- PASS") || t.starts_with("=== RUN") {
+            recognised = true;
+            total = total.saturating_add(1);
+            continue;
+        }
+    }
+
+    recognised.then_some(total)
+}
+
+#[cfg(test)]
+mod vacuous_tests {
+    use super::{evidence_is_vacuous, tests_observed};
+
+    #[test]
+    fn a_cargo_run_with_no_tests_is_vacuous() {
+        let out = "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
+        assert!(evidence_is_vacuous(out));
+        assert_eq!(tests_observed(out), Some(0));
+    }
+
+    /// The regression. Four cargo binaries, one of them empty, 39 tests in
+    /// total. The old substring check called this vacuous and would have
+    /// rejected a correct, fully-gated commit.
+    #[test]
+    fn one_empty_binary_among_several_is_not_vacuous() {
+        let out = "\
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
+        assert_eq!(tests_observed(out), Some(39));
+        assert!(!evidence_is_vacuous(out));
+    }
+
+    #[test]
+    fn node_tap_output_is_counted() {
+        assert_eq!(tests_observed("# tests 88\n# pass 88\n# fail 0"), Some(88));
+        assert!(!evidence_is_vacuous("# pass 88"));
+        assert!(evidence_is_vacuous("# pass 0"));
+    }
+
+    #[test]
+    fn a_go_run_with_only_empty_packages_is_vacuous() {
+        assert!(evidence_is_vacuous("?   \tdemo/internal/ports\t[no test files]"));
+        assert!(!evidence_is_vacuous(
+            "?   \tdemo/internal/ports\t[no test files]\nok  \tdemo\t0.004s"
+        ));
+    }
+
+    /// An unrecognised runner is not judged. Rejecting every `make check`
+    /// would break more gates than the guard protects.
+    #[test]
+    fn an_unrecognised_runner_is_not_called_vacuous() {
+        assert_eq!(tests_observed("Build succeeded.\nAll checks passed."), None);
+        assert!(!evidence_is_vacuous("Build succeeded.\nAll checks passed."));
+    }
 }
 
 fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResult, duration_ms: u64) {
@@ -220,147 +336,78 @@ fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResu
     store_run(run);
 }
 
-// ── SpacetimeDB persistence (survives nexus restarts) ────────────────────────
+// ── local persistence (survives a restart, needs no database) ────────────────
 
-fn stdb_host() -> String {
-    std::env::var("HEX_STDB_HOST").unwrap_or_else(|_| hex_core::SPACETIMEDB_DEFAULT_HOST.to_string())
-}
-
-/// Fire-and-forget persist of a run to STDB. The in-memory feed is the fast path;
-/// STDB is the durable backing. Never blocks or fails a recorder.
+/// Fire-and-forget persist of a run. The in-memory ring is the fast path; this is the copy that
+/// outlives the process. Never blocks or fails a recorder.
+///
+/// Was a `record_agent_run` reducer call to SpacetimeDB — so a feed that exists to be READ needed a
+/// database WRITE to a service the daemon owned, and the agent loop carried that dependency purely
+/// to leave a trace of itself.
 fn persist_run_async(run: DirectRun) {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn(async move {
-            if let Err(e) = persist_run(&run).await {
-                tracing::debug!(error = %e, "agent-run STDB persist failed (non-fatal)");
-            }
-        });
-    }
-}
-
-async fn persist_run(run: &DirectRun) -> Result<(), String> {
-    // Globally-unique key — `<started_at>#<seq>` stays unique even though the
-    // in-memory RUN_ID resets to 1 on each restart (started_at differs).
+    // `<started_at>#<seq>` stays unique across restarts even though RUN_ID resets to 1, because
+    // started_at differs. Kept from the STDB key for exactly that reason.
     let id = format!("{}#{}", run.started_at, run.id);
-    let url = format!("{}/v1/database/hex/call/record_agent_run", stdb_host());
-    let args = json!([
-        id,
-        run.agent,
-        run.started_at,
-        run.instruction,
-        run.file,
-        run.model,
-        run.ok,
-        run.attempts,
-        run.evidence_passed,
-        run.committed.clone().unwrap_or_default(),
-        run.duration_ms,
-        run.error.clone().unwrap_or_default(),
-    ]);
-    let res = reqwest::Client::new()
-        .post(&url)
-        .json(&args)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        return Err(format!("reducer {}: {}", res.status(), res.text().await.unwrap_or_default()));
-    }
-    Ok(())
+    crate::local_store::persist_run(&json!({
+        "id": id,
+        "agent": run.agent,
+        "started_at": run.started_at,
+        "instruction": run.instruction,
+        "file": run.file,
+        "model": run.model,
+        "ok": run.ok,
+        "attempts": run.attempts,
+        "evidence_passed": run.evidence_passed,
+        "committed": run.committed,
+        "duration_ms": run.duration_ms,
+        "error": run.error,
+    }));
 }
 
-/// Hydrate the in-memory feed from STDB at startup (newest `RUN_HISTORY`). Called
-/// once after SpacetimeDB is up; safe to fail (empty feed) if the table is absent.
-pub async fn hydrate_from_stdb() {
-    let url = format!("{}/v1/database/hex/sql", stdb_host());
-    // SpacetimeDB SQL has no ORDER BY — fetch (bounded) and sort newest-first in Rust.
-    let q = "SELECT id, agent, started_at, instruction, file, model, ok, attempts, evidence_passed, committed, duration_ms, error FROM agent_run LIMIT 2000".to_string();
-    let res = match reqwest::Client::new()
-        .post(&url)
-        .header("Content-Type", "text/plain")
-        .body(q)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "agent-run hydrate: query failed");
-            return;
-        }
-    };
-    let text = match res.text().await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!(error = %e, "agent-run hydrate: body read failed");
-            return;
-        }
-    };
-    let body: Value = match serde_json::from_str(&text) {
-        Ok(b) => b,
-        Err(_) => {
-            tracing::warn!(body = %text.chars().take(160).collect::<String>(), "agent-run hydrate: non-JSON response");
-            return;
-        }
-    };
-    let rows = body
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|f| f.get("rows"))
-        .and_then(|r| r.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    // Rows come newest-first; rebuild the deque oldest-last and re-number for display.
-    let mut loaded: Vec<DirectRun> = Vec::new();
-    for row in &rows {
-        let c = match row.as_array() {
-            Some(c) if c.len() >= 12 => c,
-            _ => continue,
-        };
-        let s = |i: usize| c.get(i).and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let opt = |i: usize| {
-            let v = s(i);
-            if v.is_empty() { None } else { Some(v) }
-        };
-        loaded.push(DirectRun {
-            id: 0, // reassigned below
-            agent: s(1),
-            started_at: s(2),
-            instruction: s(3),
-            file: s(4),
-            model: s(5),
-            ok: c.get(6).and_then(|v| v.as_bool()).unwrap_or(false),
-            attempts: c.get(7).and_then(|v| v.as_u64()).unwrap_or(1) as u32,
-            steps: c.get(7).and_then(|v| v.as_u64()).unwrap_or(1) as u32,
-            evidence_passed: c.get(8).and_then(|v| v.as_bool()).unwrap_or(false),
-            committed: opt(9),
-            duration_ms: c.get(10).and_then(|v| v.as_u64()).unwrap_or(0),
-            error: opt(11),
-        });
-    }
-    // Newest-first (RFC3339 UTC strings sort lexically = chronologically), capped.
-    loaded.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-    loaded.truncate(RUN_HISTORY);
-    let n = loaded.len();
-    if n == 0 {
-        return;
-    }
-    // Display ids: highest number = most recent (loaded[0]).
-    for (idx, run) in loaded.iter_mut().enumerate() {
-        run.id = (n - idx) as u64;
-    }
-    RUN_ID.store((n as u64) + 1, Ordering::Relaxed);
-    if let Ok(mut q) = RUNS.lock() {
-        for run in loaded {
-            q.push_back(run);
-        }
-    }
-    tracing::info!(count = n, "agent-run feed hydrated from SpacetimeDB");
-}
-
-/// Newest-first snapshot of recorded runs for the API / CLI / dashboard.
+/// Newest-first snapshot of recorded runs.
+///
+/// Reads the local store directly. It used to read an in-memory ring buffer
+/// that `hydrate_feed()` filled at daemon startup — and when the daemon went,
+/// nothing called it. `hex do` is a short-lived process, so the buffer was
+/// empty on every read and `hex do runs` reported 0 while
+/// `~/.hex/agent-runs.jsonl` held every run that had ever happened.
+///
+/// The rows are mapped field by field rather than through
+/// `serde_json::from_value::<DirectRun>`, because the two shapes disagree and
+/// always have: the persisted `id` is the string `<started_at>#<seq>` — unique
+/// across restarts, which is why it is written that way — while `DirectRun.id`
+/// is a `u64` display number. A whole-struct deserialize fails on every row,
+/// and `hydrate_feed` swallowed that with `.ok()`. So the feed was broken
+/// twice over: never called, and wrong if it had been.
+///
+/// The display id is assigned here instead, newest highest.
 pub fn runs_snapshot() -> Vec<DirectRun> {
-    RUNS.lock().map(|q| q.iter().cloned().collect()).unwrap_or_default()
+    let rows = crate::local_store::recent_runs(RUN_HISTORY);
+    let n = rows.len() as u64;
+    rows.into_iter()
+        .enumerate()
+        .map(|(idx, v)| {
+            let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let opt = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
+            let u = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+            let b = |k: &str| v.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
+            DirectRun {
+                id: n - idx as u64,
+                agent: s("agent"),
+                started_at: s("started_at"),
+                instruction: s("instruction"),
+                file: s("file"),
+                model: s("model"),
+                ok: b("ok"),
+                attempts: u32::try_from(u("attempts")).unwrap_or(u32::MAX),
+                steps: u32::try_from(u("steps")).unwrap_or(u32::MAX),
+                evidence_passed: b("evidence_passed"),
+                committed: opt("committed"),
+                duration_ms: u("duration_ms"),
+                error: opt("error"),
+            }
+        })
+        .collect()
 }
 
 /// Aggregate counters for an at-a-glance monitor header.
@@ -383,7 +430,9 @@ pub fn runs_summary() -> Value {
 pub async fn execute_direct(task: DirectTask) -> DirectResult {
     let started = std::time::Instant::now();
     let started_at = chrono::Utc::now().to_rfc3339();
-    let model = resolve_model(&task);
+    let Some(model) = resolve_model(&task) else {
+        return DirectResult::err(NO_MODEL_CONFIGURED.to_string());
+    };
 
     // Default (ADR-2606071XXX): the multi-step ReAct tool-use loop — the agent
     // explores (grep/read/cargo_check) before editing. `--fast` keeps the
@@ -412,11 +461,26 @@ pub async fn execute_direct(task: DirectTask) -> DirectResult {
     }
 }
 
-pub(crate) fn resolve_model(task: &DirectTask) -> String {
-    task.model.clone().unwrap_or_else(|| {
-        std::env::var("HEX_DIRECT_MODEL").unwrap_or_else(|_| "qwen2.5-coder:32b".to_string())
-    })
+/// The model this task runs on: the task's own choice, then the environment
+/// override, then the project's configured tier.
+///
+/// The last step used to be a hardcoded model id. That is the founding-goal G1
+/// failure the tier module exists to remove — a caller that names a model
+/// cannot be re-pointed by editing configuration, which is the entire content
+/// of "model independence". `hex_infer::tier_model` returns `None` rather than
+/// guessing, on purpose, so an unconfigured project fails with a message that
+/// names the missing key instead of silently running on a model nobody chose.
+pub(crate) fn resolve_model(task: &DirectTask) -> Option<String> {
+    task.model
+        .clone()
+        .or_else(|| std::env::var("HEX_DIRECT_MODEL").ok())
+        .or_else(|| hex_infer::tier_model("t2"))
 }
+
+/// What to tell an operator whose project configures no model for the do-loop.
+pub(crate) const NO_MODEL_CONFIGURED: &str =
+    "no model configured — set inference.tier_models.t2 in .hex/project.json, \
+     pass --model, or set HEX_DIRECT_MODEL";
 
 /// Should this run be isolated to its own worktree? Default TRUE (ADR-2606071323)
 /// — only the operator path opts out via `isolate:false`.
@@ -466,9 +530,9 @@ async fn exec_attempts(task: &DirectTask, repo_root: &std::path::Path, factory: 
     // evidence depends on (ADR-2606080915 follow-up — do-loop commit-gap fix).
     let start_dirty = dirty_paths(repo_root).await;
     let max_attempts = task.max_attempts.unwrap_or(3).clamp(1, 6);
-    let model = task.model.clone().unwrap_or_else(|| {
-        std::env::var("HEX_DIRECT_MODEL").unwrap_or_else(|_| "qwen2.5-coder:32b".to_string())
-    });
+    let Some(model) = resolve_model(task) else {
+        return DirectResult::err(NO_MODEL_CONFIGURED.to_string());
+    };
 
     let abs_path = repo_root.join(&task.file);
 
@@ -540,8 +604,15 @@ async fn exec_attempts(task: &DirectTask, repo_root: &std::path::Path, factory: 
                     return result;
                 }
                 Err(e) => {
-                    result.error = Some(format!("commit: {}", e));
-                    return result; // edit good + evidence passed but commit failed — surface it
+                    // The edit is good and the gate passed; only git failed. Keep
+                    // the change, unstage it, and name the half that broke.
+                    let _ = std::process::Command::new("git")
+                        .args(["reset", "-q", "--"])
+                        .arg(&task.file)
+                        .current_dir(repo_root)
+                        .output();
+                    result.error = Some(crate::direct_react::commit_failure_hint(&e));
+                    return result;
                 }
             }
         } else {
@@ -690,66 +761,18 @@ pub(crate) async fn gather_context(task: &DirectTask) -> String {
     out
 }
 
-/// Best-effort pull of `lesson:`/`gap:` entries (key, value) from the
-/// hexflo_memory table over the STDB HTTP SQL endpoint. Columns mapped by name
-/// (schema.elements). Returned unranked; callers rank by graph relevance
+/// Best-effort pull of `lesson:`/`gap:` entries from the local memory file.
+///
+/// Was a SQL query against the `hexflo_memory` table over SpacetimeDB's HTTP endpoint, so the
+/// agent could not recall a lesson without a database up — for a read of key/value pairs it never
+/// writes here. Returned unranked; callers rank by graph relevance
 /// (`hex_graph::context::rank_lessons`). Capped to keep the pull bounded.
+///
+/// One JSON object per line, `{"key": "lesson:…", "value": "…"}`, at `~/.hex/memory.jsonl`. An
+/// absent file is an empty memory, not an error — a fresh install has learned nothing yet.
 pub async fn fetch_lessons() -> Vec<(String, String)> {
     const CAP: usize = 200;
-    let url = format!("{}/v1/database/hex/sql", stdb_host());
-    let http = match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    let resp = match http
-        .post(&url)
-        .header("Content-Type", "text/plain")
-        .body("SELECT key, value FROM hexflo_memory")
-        .send()
-        .await
-    {
-        Ok(r) if r.status().is_success() => r,
-        _ => return Vec::new(),
-    };
-    let body: Value = match resp.json().await {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    let mut lessons = Vec::new();
-    let Some(tables) = body.as_array() else {
-        return lessons;
-    };
-    for table in tables {
-        let cols: Vec<&str> = table
-            .get("schema")
-            .and_then(|s| s.get("elements"))
-            .and_then(|e| e.as_array())
-            .map(|els| {
-                els.iter()
-                    .filter_map(|el| {
-                        el.get("name").and_then(|n| n.get("some")).and_then(|s| s.as_str())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let ki = cols.iter().position(|c| *c == "key");
-        let vi = cols.iter().position(|c| *c == "value");
-        if let Some(rows) = table.get("rows").and_then(|r| r.as_array()) {
-            for row in rows {
-                if let Some(vals) = row.as_array() {
-                    let key = ki.and_then(|i| vals.get(i)).and_then(|v| v.as_str()).unwrap_or("");
-                    let val = vi.and_then(|i| vals.get(i)).and_then(|v| v.as_str()).unwrap_or("");
-                    if (key.starts_with("lesson:") || key.starts_with("gap:")) && !val.is_empty() {
-                        lessons.push((key.to_string(), val.to_string()));
-                        if lessons.len() >= CAP {
-                            return lessons;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    lessons
+    crate::local_store::memory_entries(CAP)
 }
 
 // ─── the one inference call ───────────────────────────────────────────────────
@@ -767,8 +790,6 @@ async fn request_edit(
     context: &str,
     prior_error: Option<&str>,
 ) -> Result<Edit, String> {
-    let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
-    let url = format!("http://127.0.0.1:{}/api/inference/complete", port);
 
     let system = "You are a precise Rust code editor. Reply in EXACTLY this format and nothing \
         else (no prose before or after):\n\
@@ -807,26 +828,17 @@ async fn request_edit(
         ));
     }
 
-    let body = json!({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "max_tokens": std::env::var("HEX_DIRECT_MAX_TOKENS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(4096),
-    });
+    // A LIBRARY CALL, not a POST to 127.0.0.1.
+    //
+    // This used to go to `http://127.0.0.1:$HEX_NEXUS_PORT/api/inference/complete`, so `hex do`
+    // could not run unless a daemon was up — for a call that already knew its own model. Same
+    // inputs, same reply, one process (Phase 1 of the solo refactor).
+    let max_tokens = std::env::var("HEX_DIRECT_MAX_TOKENS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(4096);
 
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(600))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = http.post(&url).json(&body).send().await.map_err(|e| e.to_string())?;
-    let status = resp.status();
-    let rb: Value = resp.json().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        return Err(format!("HTTP {}: {}", status, rb));
-    }
-    let content = rb.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let content = hex_infer::complete_text(model, system, &user, max_tokens).await?;
     parse_edit(&content)
 }
 

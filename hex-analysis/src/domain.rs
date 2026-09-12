@@ -166,6 +166,50 @@ impl ArchAnalysisResult {
             + (circular_deps * 15)
             + dead_exports.min(20)
             + unused_ports.min(10);
-        100u8.saturating_sub(penalty as u8)
+        // Saturate in `usize`, then narrow. `penalty as u8` wrapped: 26
+        // violations is a penalty of 260, which is 4 in a `u8`, so the worst
+        // code in the repository scored 96/100 and the score climbed back
+        // towards 100 the more violations you added. `saturating_sub` cannot
+        // help — the truncation happens before it is called.
+        //
+        // This is the number hex prints for every project. It was found by
+        // hex's own narrowing-cast rule.
+        let penalty = u8::try_from(penalty.min(100)).unwrap_or(100);
+        100u8.saturating_sub(penalty)
+    }
+}
+
+#[cfg(test)]
+mod health_score_tests {
+    use super::ArchAnalysisResult as R;
+
+    #[test]
+    fn a_clean_project_scores_100() {
+        assert_eq!(R::compute_health_score(0, 0, 0, 0), 100);
+    }
+
+    #[test]
+    fn the_score_never_climbs_as_violations_are_added() {
+        let mut previous = 100u8;
+        for violations in 0..60 {
+            let score = R::compute_health_score(violations, 0, 0, 0);
+            assert!(
+                score <= previous,
+                "score rose from {previous} to {score} at {violations} violations"
+            );
+            previous = score;
+        }
+    }
+
+    /// The exact regression: 26 violations is a penalty of 260, which used to
+    /// truncate to 4 and report 96/100.
+    #[test]
+    fn twenty_six_violations_do_not_report_ninety_six() {
+        assert_eq!(R::compute_health_score(26, 0, 0, 0), 0);
+    }
+
+    #[test]
+    fn the_worst_case_floors_at_zero_rather_than_wrapping() {
+        assert_eq!(R::compute_health_score(usize::MAX / 100, 0, 0, 0), 0);
     }
 }

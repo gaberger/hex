@@ -1,0 +1,13 @@
+[package]
+name = "ratelimiter-proof"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# none
+
+[dev-dependencies]
+# none
+
+# This example stands alone. It is not a member of the hex workspace.
+[workspace]

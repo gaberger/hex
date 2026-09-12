@@ -45,19 +45,19 @@ const ALLOWED_TOOLS: &[&str] =
 /// its OWN setting, distinct from the single-shot default. Precedence:
 /// explicit `--model` → `HEX_REACT_MODEL` env → `.hex/project.json`
 /// `inference.react_model` → the single-shot default.
-pub(crate) fn resolve_react_model(task: &DirectTask) -> String {
+pub(crate) fn resolve_react_model(task: &DirectTask) -> Option<String> {
     if let Some(m) = &task.model {
         if !m.is_empty() {
-            return m.clone();
+            return Some(m.clone());
         }
     }
     if let Ok(m) = std::env::var("HEX_REACT_MODEL") {
         if !m.is_empty() {
-            return m;
+            return Some(m);
         }
     }
     if let Some(m) = react_model_from_config() {
-        return m;
+        return Some(m);
     }
     direct_exec::resolve_model(task)
 }
@@ -82,11 +82,17 @@ pub async fn react_execute(task: DirectTask) -> (DirectResult, u32, String) {
     let slug = crate::direct_workspace::next_run_slug();
     let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate) {
         Ok(w) => w,
-        Err(e) => return (DirectResult::err(format!("workspace: {e}")), 0, resolve_react_model(&task)),
+        Err(e) => {
+            return (
+                DirectResult::err(format!("workspace: {e}")),
+                0,
+                resolve_react_model(&task).unwrap_or_default(),
+            )
+        }
     };
     if let Err(e) = workspace.assert_off_operator_tree() {
         workspace.finish(false);
-        return (DirectResult::err(e), 0, resolve_react_model(&task));
+        return (DirectResult::err(e), 0, resolve_react_model(&task).unwrap_or_default());
     }
     let repo_root = workspace.workdir().to_path_buf();
     let factory = workspace.is_isolated();
@@ -101,7 +107,13 @@ async fn react_attempts(
     repo_root: &std::path::Path,
     factory: bool,
 ) -> (DirectResult, u32, String) {
-    let model = resolve_react_model(task);
+    let Some(model) = resolve_react_model(task) else {
+        return (
+            DirectResult::err(direct_exec::NO_MODEL_CONFIGURED.to_string()),
+            0,
+            String::new(),
+        );
+    };
     let max_steps = task.max_steps.unwrap_or(DEFAULT_MAX_STEPS).clamp(1, 40);
     let abs_path = repo_root.join(&task.file);
     // Snapshot pre-run dirty files so the commit includes the supporting files the
@@ -125,17 +137,6 @@ async fn react_attempts(
     let seed = build_seed(task, &context_block, &abs_path);
     let mut messages: Vec<Value> = vec![json!({ "role": "user", "content": seed })];
 
-    let inference_url = {
-        let port = std::env::var("HEX_NEXUS_PORT").unwrap_or_else(|_| "5555".to_string());
-        format!("http://127.0.0.1:{}/api/inference/complete", port)
-    };
-    let http = match reqwest::Client::builder().timeout(Duration::from_secs(600)).build() {
-        Ok(c) => c,
-        Err(e) => {
-            result.error = Some(format!("http build: {}", e));
-            return (result, 0, model);
-        }
-    };
 
     let mut prior_successes: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut steps = 0u32;
@@ -146,7 +147,7 @@ async fn react_attempts(
         // Compress the transcript before each call; LLM-summarize on overflow.
         let mut sent = compress_messages(&messages, &opts);
         if estimate_tokens(&sent) > MAX_CTX_TOKENS {
-            sent = summarize_overflow(&http, &inference_url, &model, sent).await;
+            sent = summarize_overflow(&model, sent).await;
         }
 
         let req = json!({
@@ -156,16 +157,13 @@ async fn react_attempts(
             "tools": tools_schema,
             "messages": sent,
         });
-        let body: Value = match http.post(&inference_url).json(&req).send().await {
-            Ok(r) => match r.json().await {
-                Ok(v) => v,
-                Err(e) => {
-                    result.error = Some(format!("inference json: {}", e));
-                    break;
-                }
-            },
+        // A library call. This was a POST to 127.0.0.1:$HEX_NEXUS_PORT, which is why the ReAct
+        // loop could not run without a daemon up. The request and the reply keep the daemon
+        // route's exact JSON shape, so `extract_tool_uses` below is untouched.
+        let body: Value = match hex_infer::complete_raw(&req).await {
+            Ok(v) => v,
             Err(e) => {
-                result.error = Some(format!("inference http: {}", e));
+                result.error = Some(format!("inference: {}", e));
                 break;
             }
         };
@@ -218,6 +216,18 @@ async fn react_attempts(
                     EditOutcome::ApplyFailed(msg) => {
                         tracing::warn!(step = steps, detail = %msg, "react: propose_edit apply FAILED");
                         tool_results.push(tool_result_block(&tu.id, false, &json!({ "apply": "failed", "detail": msg })));
+                    }
+                    EditOutcome::CommitFailed(msg) => {
+                        // Terminal, and honest about which half worked. Retrying
+                        // cannot help: the edit is right and git is the problem.
+                        tracing::warn!(step = steps, detail = %msg, "react: evidence PASSED, commit failed");
+                        result.edit_applied = true;
+                        result.evidence_passed = true;
+                        result.committed = None;
+                        result.ok = false;
+                        result.attempts = steps;
+                        result.error = Some(msg);
+                        return (result, steps, model);
                     }
                 }
                 continue;
@@ -286,11 +296,39 @@ enum EditOutcome {
     Committed(String),
     EvidenceFailed(String),
     ApplyFailed(String),
+    /// The gate passed and `git commit` did not.
+    ///
+    /// Its own variant because the old code returned `ApplyFailed("commit: …")`
+    /// — so a correct, gate-passing change was reported as a failed *apply*,
+    /// the CLI printed "did not pass evidence" when evidence had passed, and
+    /// the fix was reverted and thrown away. In a fresh clone with no
+    /// `git config user.email` that is every run, and the only clue was a
+    /// one-line git error buried above a passing test summary.
+    CommitFailed(String),
 }
 
-/// Apply a proposed edit, run the evidence command, commit on pass. On any
-/// failure the edit is REVERTED so each `propose_edit` is atomic (the next one
-/// matches against the original file, not a half-applied one).
+/// Turn a git failure into something the operator can act on.
+///
+/// The message that started this: "fatal: unable to auto-detect email address
+/// (got 'user@host.(none)')". Correct, and it tells you nothing about what to
+/// do, while appearing under a passing test summary.
+pub(crate) fn commit_failure_hint(err: &str) -> String {
+    let base = format!("evidence PASSED but the commit failed: {err}");
+    if err.contains("auto-detect email") || err.contains("tell me who you are") {
+        format!(
+            "{base}\n  This repository has no git identity. The change is in your working \
+             tree, unstaged — commit it yourself, or set one:\n    \
+             git config user.email you@example.com && git config user.name \"Your Name\""
+        )
+    } else {
+        format!("{base}\n  The change is in your working tree, unstaged.")
+    }
+}
+
+/// Apply a proposed edit, run the evidence command, commit on pass. On an APPLY
+/// or EVIDENCE failure the edit is REVERTED so each `propose_edit` is atomic
+/// (the next one matches against the original file, not a half-applied one).
+/// A COMMIT failure is different and is not reverted — see [`EditOutcome::CommitFailed`].
 async fn apply_and_verify(
     abs_path: &std::path::Path,
     repo_root: &std::path::Path,
@@ -316,8 +354,17 @@ async fn apply_and_verify(
         match direct_exec::commit(repo_root, &task.file, &task.instruction, factory, start_dirty).await {
             Ok(hash) => EditOutcome::Committed(hash),
             Err(e) => {
-                let _ = std::fs::write(abs_path, &content); // revert
-                EditOutcome::ApplyFailed(format!("commit: {}", e))
+                // Do NOT revert. The change passed the gate; it is correct work,
+                // and deleting it because git could not record it destroys the
+                // only valuable thing the run produced. Leave it in the working
+                // tree and unstage, so the operator finds a clean diff rather
+                // than a staged fix sitting behind a reverted file.
+                let _ = std::process::Command::new("git")
+                    .args(["reset", "-q", "--"])
+                    .arg(&task.file)
+                    .current_dir(repo_root)
+                    .output();
+                EditOutcome::CommitFailed(commit_failure_hint(&e))
             }
         }
     } else {
@@ -465,12 +512,7 @@ fn build_seed(task: &DirectTask, context: &str, abs_path: &std::path::Path) -> S
 /// LLM half of hybrid compression: when even the mechanical pass is over budget,
 /// summarize the older region (everything but the seed + last 2 turns) into one
 /// note via a single cheap-model call. Best-effort: on failure, return the input.
-async fn summarize_overflow(
-    http: &reqwest::Client,
-    url: &str,
-    model: &str,
-    messages: Vec<Value>,
-) -> Vec<Value> {
+async fn summarize_overflow(model: &str, messages: Vec<Value>) -> Vec<Value> {
     if messages.len() <= 3 {
         return messages;
     }
@@ -490,14 +532,22 @@ async fn summarize_overflow(
         "max_tokens": 512,
         "messages": [{ "role": "user", "content": prompt }],
     });
-    let summary = match http.post(url).json(&req).send().await {
-        Ok(r) => r
-            .json::<Value>()
-            .await
-            .ok()
-            .and_then(|b| b.get("content").and_then(|v| v.as_str()).map(|s| s.to_string())),
-        Err(_) => None,
-    };
+    // Best-effort, as before: a failed summary returns the input unchanged rather than failing
+    // the run. `content` is a block array now, not a string, so the text is joined out of it.
+    let summary = hex_infer::complete_raw(&req).await.ok().and_then(|b| {
+        let joined: String = b
+            .get("content")
+            .and_then(|v| v.as_array())
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(|x| x.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default();
+        if joined.is_empty() { None } else { Some(joined) }
+    });
 
     let mut out = vec![seed];
     if let Some(s) = summary {
@@ -522,6 +572,32 @@ fn flatten_text(m: &Value) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod commit_failure_tests {
+    use super::commit_failure_hint;
+
+    /// The exact message a fresh clone produces, and the exact thing it failed
+    /// to say: which half worked, and what to do about it.
+    #[test]
+    fn a_missing_git_identity_gets_an_actionable_hint() {
+        let h = commit_failure_hint(
+            "fatal: unable to auto-detect email address (got 'gary@max.(none)')",
+        );
+        assert!(h.contains("evidence PASSED"), "must say the gate passed: {h}");
+        assert!(h.contains("git config user.email"), "must say how to fix it: {h}");
+        assert!(h.contains("working tree"), "must say the change was kept: {h}");
+    }
+
+    /// Any other git failure still says the two things that matter.
+    #[test]
+    fn any_commit_failure_says_the_change_was_kept() {
+        let h = commit_failure_hint("error: could not lock config file");
+        assert!(h.contains("evidence PASSED"));
+        assert!(h.contains("working tree"));
+        assert!(!h.contains("git config user.email"), "no identity hint when that is not the cause");
     }
 }
 
@@ -570,7 +646,11 @@ pub fn candidate_models(explicit: Option<&str>, configured: &[String], single: O
     if let Some(m) = single {
         return vec![m.to_string()];
     }
-    vec!["devstral-small-2:24b".to_string(), "qwen2.5-coder:14b".to_string()]
+    // No hardcoded last resort. A model id written here is a model the
+    // operator never chose and cannot change by editing configuration — the
+    // founding-goal G1 failure in one line. An empty list makes the caller
+    // say what is missing instead.
+    Vec::new()
 }
 /// Extract candidate model list from a parsed config JSON value
 /// and delegate ordering/precedence to candidate_models.
@@ -785,8 +865,17 @@ async fn claude_attempts(
                 result.committed = Some(hash);
             }
             Err(e) => {
-                let _ = std::fs::write(&abs_path, &snapshot);
-                result.error = Some(format!("commit: {}", e));
+                // Same rule as the ReAct path: a change that passed the gate is
+                // correct work, and git failing to record it is not a reason to
+                // delete it. Keep it, unstage it, say which half failed.
+                let _ = std::process::Command::new("git")
+                    .args(["reset", "-q", "--"])
+                    .arg(&task.file)
+                    .current_dir(repo_root)
+                    .output();
+                result.evidence_passed = true;
+                result.edit_applied = true;
+                result.error = Some(commit_failure_hint(&e));
             }
         }
     } else {

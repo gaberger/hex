@@ -26,11 +26,10 @@ pub async fn run() -> anyhow::Result<()> {
     // Gate 5: Embedded assets must be project-generic (ADR-2026-04-11-1142)
     all_passed &= gate_embedded_assets_generic();
 
-    // Gate 6: WASM assets in hex-cli/assets/wasm/ must be at-or-newer than
-    // the corresponding spacetime-modules/<x>/src/. Stale wasm means nexus
-    // ships old reducer behavior despite source updates — root cause of the
-    // "no agents starting" outage we just fixed.
-    all_passed &= gate_wasm_fresh().await;
+    // Gate 6 is gone with the modules it guarded. It compared hex-cli/assets/wasm/<x>.wasm against
+    // spacetime-modules/<x>/src/ — both deleted in the solo collapse. A freshness check against a
+    // source tree that does not exist cannot fail honestly, and a gate that cannot fail is worse
+    // than no gate: it reports green forever (spec S12).
 
     println!();
     if all_passed {
@@ -44,9 +43,15 @@ pub async fn run() -> anyhow::Result<()> {
 
 /// Standalone composition gate (ADR-2026-04-11-2000).
 ///
-/// Validates that the standalone composition path works by:
-/// 1. Running the doctor composition check to verify prerequisites.
-/// 2. Running the standalone dispatch test suites from P2, P3, and P6.
+/// Validates that the dispatch path works end to end:
+/// 1. The composition check — an inference adapter resolves.
+/// 2. The inference adapters' own tests.
+/// 3. The agent loop and its guarded tool library.
+///
+/// "Standalone" named the no-daemon variant back when there was a daemon to be
+/// the other variant. There is only this one now (ADR-2608241500); the verb
+/// survives because the question it asks — can this binary dispatch work on its
+/// own — is still worth asking on every build.
 pub async fn run_standalone_gate() -> anyhow::Result<()> {
     println!("{} hex ci --standalone-gate", "\u{2b21}".cyan());
     println!();
@@ -69,26 +74,18 @@ pub async fn run_standalone_gate() -> anyhow::Result<()> {
         all_passed = false;
     }
 
-    // Step 2: Standalone dispatch tests (P2 — composition)
-    all_passed &= run_test_suite(
-        "P2 composition",
-        &["test", "-p", "hex-nexus", "--lib", "--", "composition_standalone", "--ignored"],
-    )
-    .await;
-
-    // Step 3: Ollama adapter tests (P3)
-    all_passed &= run_test_suite(
-        "P3 Ollama adapter",
-        &["test", "-p", "hex-nexus", "--lib", "--", "ollama", "--ignored"],
-    )
-    .await;
-
-    // Step 4: Standalone dispatch e2e tests (P6)
-    all_passed &= run_test_suite(
-        "P6 standalone dispatch",
-        &["test", "-p", "hex-nexus", "--lib", "--", "standalone_dispatch", "--ignored"],
-    )
-    .await;
+    // Steps 2 and 3: the crates the dispatch path is actually made of.
+    //
+    // These three steps used to run `cargo test -p hex-nexus -- … --ignored`
+    // against three suites in the daemon. The daemon went in ADR-2608241500 and
+    // its suites went with it, so every run of this gate printed three `fail`
+    // lines reading "package ID specification `hex-nexus` did not match any
+    // packages" — a gate failing for a reason that has nothing to do with what
+    // it gates, which is indistinguishable from the thing it gates being
+    // broken. It was found by hex's own ADR rules, on the line naming the
+    // deleted crate.
+    all_passed &= run_test_suite("Inference adapters", &["test", "-p", "hex-infer"]).await;
+    all_passed &= run_test_suite("Agent loop + tools", &["test", "-p", "hex-exec"]).await;
 
     println!();
     if all_passed {
@@ -122,14 +119,35 @@ async fn run_test_suite(label: &str, args: &[&str]) -> bool {
             let stderr = String::from_utf8_lossy(&o.stderr);
             let stdout = String::from_utf8_lossy(&o.stdout);
             println!("{}", "fail".red());
-            // Show first few lines of output for diagnostics
-            let combined = if stderr.is_empty() {
-                stdout.to_string()
+            // Show the lines that say what failed.
+            //
+            // This used to print the first five lines of stderr, which for
+            // `cargo test` are compile warnings from the build it ran first.
+            // A failing gate reported "warning: function `feed_path` is never
+            // used" and said nothing about the assertion that actually broke —
+            // output that is worse than none, because it sends the reader after
+            // the wrong thing.
+            let combined = format!("{stderr}\n{stdout}");
+            let signal: Vec<&str> = combined
+                .lines()
+                .filter(|l| {
+                    let t = l.trim_start();
+                    t.starts_with("error")
+                        || t.starts_with("test result: FAILED")
+                        || t.starts_with("panicked")
+                        || t.contains("... FAILED")
+                        || t.contains("did not match any packages")
+                })
+                .collect();
+            let shown: Vec<&str> = if signal.is_empty() {
+                // Nothing matched: fall back to the tail, where a runner puts
+                // its summary, rather than the head, where the build puts noise.
+                combined.lines().rev().take(5).collect::<Vec<_>>()
             } else {
-                stderr.to_string()
+                signal
             };
-            for line in combined.lines().take(5) {
-                println!("      {}", line.dimmed());
+            for line in shown.iter().take(8) {
+                println!("      {}", line.trim_end().dimmed());
             }
             false
         }
@@ -142,49 +160,38 @@ async fn run_test_suite(label: &str, args: &[&str]) -> bool {
 
 async fn gate_analyze() -> bool {
     print!("  {} Architecture boundaries ... ", "\u{25cb}".dimmed());
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    match nexus.get("/api/analyze?path=.").await {
-        Ok(resp) => {
-            let violations = resp["violations"]
-                .as_array()
-                .map(|v| v.len())
-                .unwrap_or(0);
-            if violations == 0 {
+    // In-process (ADR-2608241500 P6.2). This asked the daemon for
+    // /api/analyze and fell back to `cargo check` when it was down — so the
+    // gate silently degraded from "no boundary violations" to "it compiles",
+    // which are not the same claim.
+    let root = std::path::Path::new(".");
+    let ast = std::sync::Arc::new(hex_analysis::treesitter_adapter::TreeSitterAdapter::new());
+    let analyzer = hex_analysis::analyzer::ArchAnalyzer::new(ast);
+    use hex_analysis::ports::ArchAnalysisPort;
+    match analyzer.analyze(root).await {
+        Ok(result) => {
+            let violations = &result.violations;
+            if violations.is_empty() {
                 println!("{}", "pass".green());
-                true
-            } else {
-                println!("{} ({} violation{})", "fail".red(), violations, if violations == 1 { "" } else { "s" });
-                if let Some(arr) = resp["violations"].as_array() {
-                    for v in arr.iter().take(5) {
-                        let msg = v["message"].as_str().unwrap_or("");
-                        println!("      {}", msg.dimmed());
-                    }
-                    if arr.len() > 5 {
-                        println!("      ... and {} more", arr.len() - 5);
-                    }
-                }
-                false
+                return true;
             }
+            println!(
+                "{} ({} violation{})",
+                "fail".red(),
+                violations.len(),
+                if violations.len() == 1 { "" } else { "s" }
+            );
+            for v in violations.iter().take(5) {
+                println!("      {} {}", v.edge.from_file.dimmed(), v.rule.dimmed());
+            }
+            if violations.len() > 5 {
+                println!("      ... and {} more", violations.len() - 5);
+            }
+            false
         }
-        Err(_) => {
-            // Nexus not running — fall back to local cargo check as a proxy
-            println!("{} (nexus unavailable, running cargo check)", "?".yellow());
-            let out = tokio::process::Command::new("cargo")
-                .args(["check", "--workspace", "--quiet"])
-                .output()
-                .await;
-            match out {
-                Ok(o) if o.status.success() => { println!("      {} cargo check", "pass".green()); true }
-                Ok(o) => {
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    println!("      {} cargo check failed:", "fail".red());
-                    for line in stderr.lines().take(10) {
-                        println!("        {}", line.dimmed());
-                    }
-                    false
-                }
-                Err(e) => { println!("      {} could not run cargo check: {}", "fail".red(), e); false }
-            }
+        Err(e) => {
+            println!("{} ({})", "fail".red(), e);
+            false
         }
     }
 }
@@ -470,33 +477,6 @@ async fn gate_spec_coverage() -> bool {
     }
 }
 
-/// Verify each spacetime-modules/<x>/src/ tree's newest .rs mtime is <=
-/// the corresponding hex-cli/assets/wasm/<x>.wasm mtime. Wraps
-/// scripts/check-wasm-fresh.sh — single source of truth for the policy.
-async fn gate_wasm_fresh() -> bool {
-    print!("  {} WASM assets fresh ......... ", "\u{25cb}".dimmed());
-    let script = std::path::Path::new("scripts/check-wasm-fresh.sh");
-    if !script.exists() {
-        println!("{} (scripts/check-wasm-fresh.sh missing)", "skip".yellow());
-        return true;
-    }
-    let out = tokio::process::Command::new("bash")
-        .arg(script)
-        .output()
-        .await;
-    match out {
-        Ok(o) if o.status.success() => { println!("{}", "pass".green()); true }
-        Ok(o) => {
-            println!("{}", "fail".red());
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            for line in stdout.lines().take(8) {
-                println!("      {}", line.dimmed());
-            }
-            false
-        }
-        Err(e) => { println!("{} ({})", "fail".red(), e); false }
-    }
-}
 
 fn gate_embedded_assets_generic() -> bool {
     print!("  {} Embedded assets generic ... ", "\u{25cb}".dimmed());

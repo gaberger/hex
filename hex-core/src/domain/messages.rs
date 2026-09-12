@@ -71,7 +71,7 @@ impl Message {
                 ContentBlock::ToolResult { content, .. } => content.len(),
             })
             .sum();
-        (chars / 4).max(1) as u32
+        u32::try_from((chars / 4).max(1)).unwrap_or(u32::MAX)
     }
 
     /// Extract all tool_use blocks from this message.
@@ -146,7 +146,7 @@ impl ConversationState {
     }
 
     pub fn total_estimated_tokens(&self) -> u32 {
-        let system_tokens = (self.system_prompt.len() / 4).max(1) as u32;
+        let system_tokens = u32::try_from((self.system_prompt.len() / 4).max(1)).unwrap_or(u32::MAX);
         let message_tokens: u32 = self.messages.iter().map(|m| m.estimated_tokens()).sum();
         system_tokens + message_tokens
     }

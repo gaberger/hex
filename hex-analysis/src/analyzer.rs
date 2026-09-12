@@ -19,7 +19,7 @@ use super::domain::{
 };
 use super::frontend_checker;
 use super::layer_classifier::classify_layer;
-use super::path_normalizer::{normalize_path, resolve_import_path};
+use super::path_normalizer::{normalize_path, normalize_path_in, resolve_import_path};
 use super::ports::{AnalysisError, AstPort, ArchAnalysisPort};
 
 /// Source file glob patterns for supported languages.
@@ -180,7 +180,8 @@ impl ArchAnalyzer {
             // Build edges with resolved paths and layer classification
             for imp in &imports {
                 let resolved = resolve_import_path(rel_path, &imp.raw_path, go_module_prefix);
-                let to_file = normalize_path(&resolved);
+                // The importing file decides the language, not the resolved target.
+                let to_file = normalize_path_in(&resolved, Language::from_path(rel_path));
                 all_edges.push(ImportEdge {
                     from_file: from_file.clone(),
                     to_file: to_file.clone(),
@@ -197,7 +198,10 @@ impl ArchAnalyzer {
                     .into_iter()
                     .map(|mut imp| {
                         imp.resolved_path =
-                            normalize_path(&resolve_import_path(rel_path, &imp.raw_path, go_module_prefix));
+                            normalize_path_in(
+                                &resolve_import_path(rel_path, &imp.raw_path, go_module_prefix),
+                                Language::from_path(rel_path),
+                            );
                         imp
                     })
                     .collect(),
@@ -235,8 +239,9 @@ impl ArchAnalyzer {
                 imports: imports
                     .into_iter()
                     .map(|mut imp| {
-                        imp.resolved_path = normalize_path(
+                        imp.resolved_path = normalize_path_in(
                             &resolve_import_path(rel_path, &imp.raw_path, go_module_prefix),
+                            Language::from_path(rel_path),
                         );
                         imp
                     })

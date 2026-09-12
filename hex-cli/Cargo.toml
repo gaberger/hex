@@ -17,6 +17,9 @@ path = "src/lib.rs"
 hex-core = { path = "../hex-core" }
 hex-exec = { path = "../hex-exec" }
 hex-graph = { path = "../hex-graph" }
+hex-analysis = { path = "../hex-analysis" }
+hex-git = { path = "../hex-git" }
+hex-infer = { path = "../hex-infer" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -25,6 +28,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 colored = "2"
 anyhow = "1"
+async-trait = "0.1"
 dirs = "5"
 libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }

@@ -34,15 +34,17 @@ pub enum TaskIntent {
 /// Entries are matched as a prefix followed by end-of-string or whitespace,
 /// so `"systemctl status"` covers `"systemctl status ollama"` but not
 /// `"systemctl stop ollama"`.
-pub(crate) const COMMAND_WHITELIST: &[&str] = &[
-    "nvidia-smi",
-    "df",
-    "ollama",
-    "ps",
-    "systemctl status",
-    "uptime",
-    "free",
-];
+pub(crate) fn command_whitelist() -> Vec<String> {
+    let mut v: Vec<String> = ["nvidia-smi", "df", "ps", "systemctl status", "uptime", "free"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    // The inference server's binary is whitelisted too, but this file does not
+    // get to know its name (founding goal G1).
+    v.push(hex_infer::local_provider().binary.to_string());
+    v.sort();
+    v
+}
 
 /// Read additional whitelist entries from `.hex/project.json` under the
 /// `command_whitelist` array key. Missing file/key → empty list.
@@ -86,7 +88,7 @@ fn whitelist_entry_matches(command: &str, entry: &str) -> bool {
 /// True iff `command` matches the hard-coded whitelist or any addition from
 /// `.hex/project.json`. Used to gate remote-shell dispatch (P1.2).
 pub(crate) fn is_command_whitelisted(command: &str) -> bool {
-    if COMMAND_WHITELIST
+    if command_whitelist()
         .iter()
         .any(|e| whitelist_entry_matches(command, e))
     {
@@ -106,7 +108,7 @@ fn whitelist_rejection_reason(command: &str) -> String {
     format!(
         "`{}` is not in the remote-shell whitelist.\n    Allowed: {}\n    Add custom entries to .hex/project.json:\n      {{ \"command_whitelist\": [\"your-command\"] }}",
         head,
-        COMMAND_WHITELIST.join(", ")
+        command_whitelist().join(", ")
     )
 }
 
@@ -211,9 +213,24 @@ fn classify_intent(text: &str) -> TaskIntent {
     }
     // Benchmark
     if t.contains("bench") || t.contains("benchmark") {
-        // Try to extract a provider name — e.g. "bench qwen3-4b" or "benchmark bazzite-qwen3-4b"
-        let provider = text.split_whitespace()
-            .find(|w| w.starts_with("bazzite-") || w.contains("qwen") || w.contains("coder"))
+        // Match the word against the models this project actually configures,
+        // rather than guessing from substrings of vendor names.
+        //
+        // This used to test `w.contains("qwen") || w.contains("coder")`, which
+        // both broke G1 and worked only for the two vendors someone happened to
+        // think of: "bench gemma4-12b" matched nothing and silently benchmarked
+        // the default instead of saying it did not understand.
+        let configured: Vec<String> = hex_infer::configured_tiers()
+            .into_iter()
+            .map(|(_, _, m)| m)
+            .chain(hex_infer::react_models())
+            .collect();
+        let provider = text
+            .split_whitespace()
+            .find(|w| {
+                w.starts_with("bazzite-")
+                    || configured.iter().any(|m| m.starts_with(*w) || w.starts_with(m.as_str()))
+            })
             .unwrap_or("");
         if !provider.is_empty() {
             return TaskIntent::HexCommand {
@@ -575,21 +592,15 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
         }
     }
 
-    // Queue vs execute
-    if args.queue {
-        let id = super::sched::enqueue_brain_task_pub(kind, &payload).await?;
-        println!("  ⬡ enqueued brain task {}", id.bright_black());
-        println!("    daemon will pick up on next tick");
-    } else {
-        let (ok, result) = super::sched::execute_brain_task(kind, &payload).await;
-        if ok {
-            println!("  {} completed", "✓".green());
-            if !result.trim().is_empty() {
-                println!("{}", result);
-            }
-        } else {
-            println!("  {} failed: {}", "✗".red(), result);
+    // There is no queue and no daemon tick to defer to: `hex hey` acts now.
+    let (ok, result) = execute_intent(kind, &payload).await;
+    if ok {
+        println!("  {} completed", "✓".green());
+        if !result.trim().is_empty() {
+            println!("{}", result);
         }
+    } else {
+        println!("  {} failed: {}", "✗".red(), result);
     }
 
     Ok(())
@@ -606,25 +617,19 @@ async fn llm_classify(text: &str) -> anyhow::Result<Option<(String, String, Stri
         "Classify this intent into a hex CLI task. Respond ONLY with JSON like {{\"kind\":\"hex-command\",\"payload\":\"analyze .\",\"description\":\"...\"}} or {{\"kind\":\"unknown\"}}.\n\nValid kinds: hex-command (hex <args>), shell (cargo/git/ls/echo only), workplan (path).\n\nIntent: {}",
         text
     );
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    let resp: serde_json::Value = tokio::time::timeout(
-        std::time::Duration::from_secs(45),
-        nexus.post("/api/inference/complete", &serde_json::json!({
-            "model": "gemma4:latest",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 200,
-        }))
-    ).await.map_err(|_| anyhow::anyhow!("LLM classify timed out after 15s — try manual: hex brain enqueue hex-command -- \"<cmd>\""))??;
-    // Response content may be a string OR an array of content blocks
-    let content_owned = match resp.get("content") {
-        Some(v) if v.is_string() => v.as_str().unwrap_or("").to_string(),
-        Some(v) if v.is_array() => v.as_array().unwrap().iter()
-            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
-            .collect::<Vec<_>>().join(""),
-        _ => String::new(),
+    // Classification is the cheapest thing hex asks a model to do, so it runs
+    // on T1. The model id comes from `.hex/project.json` rather than being
+    // written here: G1's test is that no file outside hex-infer names one.
+    let Some(model) = hex_infer::tier_model("t1") else {
+        return Ok(None); // no T1 model configured — fall back to the rules
     };
+    let content_owned = tokio::time::timeout(
+        std::time::Duration::from_secs(45),
+        hex_infer::complete_text(&model, "", &prompt, 200),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("intent classification timed out after 45s"))?
+    .map_err(|e| anyhow::anyhow!("intent classification: {e}"))?;
     let content = content_owned.as_str();
     // Parse JSON from response
     if let Some(start) = content.find('{') {
@@ -660,24 +665,16 @@ async fn llm_translate_shell_for_host(action: &str, host: Option<&str>) -> anyho
         "Translate this natural-language action into a single Linux shell command. Respond with ONLY the command, no explanation, no quotes, no code blocks. Use standard Linux utilities appropriate for the host.{}\n\nAction: {}\n\nCommand:",
         context_line, action
     );
-    let nexus = crate::nexus_client::NexusClient::from_env();
-    let resp: serde_json::Value = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        nexus.post("/api/inference/complete", &serde_json::json!({
-            "model": "gemma4:latest",
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 100,
-        }))
-    ).await.map_err(|_| anyhow::anyhow!("LLM shell-translate timed out after 15s — inference endpoint may be busy"))??;
-    let content = match resp.get("content") {
-        Some(v) if v.is_string() => v.as_str().unwrap_or("").to_string(),
-        Some(v) if v.is_array() => v.as_array().unwrap().iter()
-            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
-            .collect::<Vec<_>>().join(""),
-        _ => String::new(),
+    let Some(model) = hex_infer::tier_model("t1") else {
+        anyhow::bail!("no T1 model configured in .hex/project.json → inference.tier_models");
     };
+    let content = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        hex_infer::complete_text(&model, "", &prompt, 100),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("shell translation timed out after 15s"))?
+    .map_err(|e| anyhow::anyhow!("shell translation: {e}"))?;
     // Take first non-empty line, strip code fences/quotes
     let cmd = content.lines()
         .find(|l| !l.trim().is_empty() && !l.trim().starts_with("```"))
@@ -905,4 +902,36 @@ fn read_host_context(host: &str) -> Option<String> {
         .map(|l| format!("- {}", l.trim()))
         .collect();
     if lines.is_empty() { None } else { Some(lines.join("\n")) }
+}
+
+/// Run one classified intent, now.
+///
+/// `hex hey` used to hand this to the scheduler daemon's task queue via
+/// `sched::execute_brain_task`. That function carried a liveness-ping special
+/// case that wrote a SpacetimeDB row, a pre/post git-HEAD comparison recorded
+/// to the same database, and a branch that spawned the `hex-agent` binary when
+/// no Claude session was present. None of those exist (ADR-2608241500).
+///
+/// Three kinds survive the classifier, and each is one subprocess. `hex` is
+/// resolved as the running executable rather than by PATH lookup — this
+/// process *is* hex, and a PATH lookup can find a different build.
+async fn execute_intent(kind: &str, payload: &str) -> (bool, String) {
+    let me = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("hex"));
+    let output = match kind {
+        "hex-command" => {
+            tokio::process::Command::new(&me).args(payload.split_whitespace()).output().await
+        }
+        "workplan" => {
+            tokio::process::Command::new(&me).args(["plan", "execute", payload]).output().await
+        }
+        "shell" => tokio::process::Command::new("sh").arg("-c").arg(payload).output().await,
+        other => return (false, format!("unknown intent kind '{other}'")),
+    };
+    match output {
+        Ok(o) => {
+            let text = if o.stdout.is_empty() { &o.stderr } else { &o.stdout };
+            (o.status.success(), String::from_utf8_lossy(text).trim().to_string())
+        }
+        Err(e) => (false, format!("{kind}: {e}")),
+    }
 }

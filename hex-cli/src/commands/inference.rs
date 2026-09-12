@@ -17,7 +17,6 @@ use clap::Subcommand;
 use colored::Colorize;
 
 use crate::assets::Assets;
-use crate::nexus_client::NexusClient;
 
 /// Known free-tier provider template names (ADR-2026-04-05-2125).
 const PROVIDER_TEMPLATES: &[&str] = &["groq", "cerebras", "sambanova", "together", "openrouter", "ollama", "gemini"];
@@ -136,66 +135,6 @@ pub enum InferenceAction {
     },
     /// Register and calibrate the key default models (run once after install)
     Setup,
-    /// Watch for queued inference tasks and dispatch them autonomously via claude subprocess
-    Watch {
-        /// Agent ID (auto-resolved from session file if omitted)
-        #[arg(long)]
-        agent_id: Option<String>,
-        /// Run as background daemon (suppress output)
-        #[arg(long)]
-        daemon: bool,
-    },
-    /// List pending inference queue tasks
-    Queue,
-    /// Show inference cost attribution and provider statistics (ADR-2026-04-05-2125)
-    Stats,
-    /// Show escalation rates per task-tier and model (P4.2 — escalation tracking)
-    EscalationReport {
-        /// Emit findings as JSON for the improver detector pipeline
-        /// (`{findings: [{tier, model, success, escalated, rate}]}`).
-        /// Findings are tier:model combos with escalation_rate > 0.5.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Query the inference q-report: per-model usage, latency, and 7-day trends
-    QReport {
-        /// Filter by inference tier (e.g. t1, t2, t2_5, t3)
-        #[arg(long)]
-        tier: Option<String>,
-        /// Filter by task type (e.g. code_generation, reasoning)
-        #[arg(long)]
-        task_type: Option<String>,
-        /// Filter by model name substring
-        #[arg(long)]
-        model: Option<String>,
-        /// Sort column: visits, latency_p50, latency_p99, tokens, errors
-        #[arg(long, default_value = "visits")]
-        sort: String,
-        /// Maximum rows to display
-        #[arg(long, default_value_t = 20)]
-        limit: u32,
-        /// Output format: table, json, yaml
-        #[arg(long, default_value = "table")]
-        format: String,
-        /// Show only entries since this duration (e.g. 1h, 7d, 30m)
-        #[arg(long)]
-        since: Option<String>,
-        /// Continuously refresh the report (like top)
-        #[arg(long)]
-        watch: bool,
-    },
-    /// Show durable per-model usage from inference_log (real traffic, survives restarts)
-    Usage {
-        /// Only count completions newer than this duration (e.g. 1h, 7d, 30m)
-        #[arg(long)]
-        since: Option<String>,
-        /// Filter to models whose name contains this substring
-        #[arg(long)]
-        model: Option<String>,
-        /// Maximum rows to display
-        #[arg(long, default_value_t = 30)]
-        limit: u32,
-    },
     /// Benchmark a model: code-gen, reasoning, and identity prompts — quality + speed + tier recommendation (ADR-2026-04-13-1238)
     Bench {
         /// Provider ID, model name, or URL (e.g. "bazzite-ollama", "minimax-m2.7:cloud", "http://bazzite:11434")
@@ -221,16 +160,6 @@ pub enum InferenceAction {
         /// Prompt text for the streaming test
         #[arg(long, default_value = "What is hex?")]
         prompt: String,
-    },
-    /// Manage LoRA idiom-expert training corpora (ADR-2606161300 Phase 0)
-    Corpus {
-        #[command(subcommand)]
-        action: CorpusAction,
-    },
-    /// Manage LoRA idiom-expert adapters (ADR-2606161300 Phase 1)
-    Adapter {
-        #[command(subcommand)]
-        action: AdapterAction,
     },
 }
 
@@ -294,37 +223,6 @@ pub enum CorpusAction {
     List,
 }
 
-/// Write the full inference endpoint list to ~/.hex/inference-servers.json.
-/// Called after any mutation (add/remove/calibrate) so the cache stays current.
-/// Silently skips if nexus is unavailable — never fails the caller.
-async fn write_inference_cache() {
-    let nexus = NexusClient::from_env();
-    if nexus.ensure_running().await.is_err() {
-        return;
-    }
-    let endpoints = match nexus.get("/api/inference/endpoints").await {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    let hex_dir = dirs::home_dir()
-        .map(|h| h.join(".hex"))
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/.hex"));
-    let _ = std::fs::create_dir_all(&hex_dir);
-    let cache_path = hex_dir.join("inference-servers.json");
-
-    let now = chrono::Utc::now().to_rfc3339();
-    let cache = serde_json::json!({
-        "version": 1,
-        "updated_at": now,
-        "endpoints": endpoints.get("endpoints").cloned().unwrap_or_default(),
-    });
-
-    if let Ok(text) = serde_json::to_string_pretty(&cache) {
-        let _ = std::fs::write(&cache_path, text);
-    }
-}
-
 pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
     match action {
         InferenceAction::Add { provider_type, url, model, key, id, quantization } => {
@@ -350,239 +248,10 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
         }
         InferenceAction::Remove { provider_id } => remove_provider(&provider_id).await,
         InferenceAction::Setup => setup_defaults().await,
-        InferenceAction::Watch { agent_id, daemon } => watch(agent_id, daemon).await,
-        InferenceAction::Queue => queue_list().await,
-        InferenceAction::Stats => inference_stats().await,
-        InferenceAction::EscalationReport { json } => escalation_report(json).await,
-        InferenceAction::QReport { tier, task_type, model, sort, limit, format, since, watch } => {
-            q_report(tier, task_type, model, &sort, limit, &format, since, watch).await
-        }
-        InferenceAction::Usage { since, model, limit } => {
-            usage_report(since.as_deref(), model.as_deref(), limit).await
-        }
         InferenceAction::Bench { target, model, quick, compare, save } => {
             bench_provider(&target, model.as_deref(), quick, compare.as_deref(), save).await
         }
         InferenceAction::GpuCheck { model, prompt } => gpu_check(&model, &prompt).await,
-        InferenceAction::Corpus { action } => match action {
-            CorpusAction::Build { expert, dry_run } => corpus_build_cmd(&expert, dry_run).await,
-            CorpusAction::List => corpus_list_cmd().await,
-        },
-        InferenceAction::Adapter { action } => match action {
-            AdapterAction::Register { expert, base, tier, artifact, corpus_version } => {
-                adapter_register_cmd(&expert, &base, tier, &artifact, &corpus_version).await
-            }
-            AdapterAction::List => adapter_list_cmd().await,
-            AdapterAction::Remove { id } => adapter_remove_cmd(&id).await,
-            AdapterAction::Disable { id } => adapter_set_enabled_cmd(&id, false).await,
-            AdapterAction::Enable { id } => adapter_set_enabled_cmd(&id, true).await,
-            AdapterAction::Evaluate { expert } => adapter_evaluate_cmd(&expert).await,
-        },
-    }
-}
-
-/// `hex inference adapter register ...` — register a trained LoRA adapter.
-async fn adapter_register_cmd(
-    expert: &str,
-    base: &str,
-    tier: u8,
-    artifact: &str,
-    corpus_version: &str,
-) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-    let body = serde_json::json!({
-        "expert": expert,
-        "base_model": base,
-        "tier": tier,
-        "artifact_ref": artifact,
-        "corpus_version": corpus_version,
-    });
-    let resp = nexus.post("/api/inference/adapters", &body).await?;
-    if let Some(err) = resp.get("error").and_then(|v| v.as_str()) {
-        println!("  {} register failed: {}", "✗".red(), err);
-        anyhow::bail!("register failed: {err}");
-    }
-    let id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-    println!("  {} Registered adapter {}", "✓".green(), id.bold());
-    Ok(())
-}
-
-/// `hex inference adapter list` — show registered adapters with their flags.
-async fn adapter_list_cmd() -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-    let resp = nexus.get("/api/inference/adapters").await?;
-    let adapters = resp.get("adapters").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-
-    println!();
-    println!("  {}", "── LoRA adapters ──".cyan());
-    if adapters.is_empty() {
-        println!("  {}", "(none registered)".dimmed());
-        println!();
-        return Ok(());
-    }
-    for a in &adapters {
-        let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-        let enabled = a.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-        let promoted = a.get("promoted").and_then(|v| v.as_bool()).unwrap_or(false);
-        let stale = a.get("stale").and_then(|v| v.as_bool()).unwrap_or(false);
-        let dot = if enabled { "●".green() } else { "○".yellow() };
-        let mut flags: Vec<String> = Vec::new();
-        if promoted { flags.push("promoted".green().to_string()); }
-        if stale { flags.push("STALE".red().to_string()); }
-        if !enabled { flags.push("disabled".dimmed().to_string()); }
-        let suffix = if flags.is_empty() { String::new() } else { format!("  [{}]", flags.join(", ")) };
-        println!("  {} {}{}", dot, id, suffix);
-    }
-    println!();
-    Ok(())
-}
-
-/// `hex inference adapter remove <id>`.
-async fn adapter_remove_cmd(id: &str) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-    let resp = nexus.delete(&format!("/api/inference/adapters/{id}")).await?;
-    if resp.get("removed").and_then(|v| v.as_bool()).unwrap_or(false) {
-        println!("  {} Removed adapter {} (bare base restored)", "✓".green(), id);
-    } else {
-        println!("  {} No such adapter: {}", "!".yellow(), id);
-    }
-    Ok(())
-}
-
-/// `hex inference adapter disable|enable <id>`.
-async fn adapter_set_enabled_cmd(id: &str, enabled: bool) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-    let body = serde_json::json!({ "enabled": enabled });
-    let resp = nexus.patch(&format!("/api/inference/adapters/{id}"), &body).await?;
-    if resp.get("error").is_some() {
-        println!("  {} No such adapter: {}", "!".yellow(), id);
-    } else {
-        let verb = if enabled { "Enabled" } else { "Disabled" };
-        println!("  {} {} adapter {}", "✓".green(), verb, id);
-    }
-    Ok(())
-}
-
-/// `hex inference adapter evaluate <expert>` — bench-gate base vs base+adapter.
-async fn adapter_evaluate_cmd(expert: &str) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-    println!("  {} Evaluating '{}' (base vs base+adapter)…", "⬡".cyan(), expert);
-    let body = serde_json::json!({ "expert": expert });
-    let resp = nexus
-        .post_long(&format!("/api/inference/adapters/{expert}/evaluate"), &body)
-        .await?;
-    if let Some(err) = resp.get("error").and_then(|v| v.as_str()) {
-        println!("  {} evaluate failed: {}", "✗".red(), err);
-        anyhow::bail!("evaluate failed: {err}");
-    }
-    print_adapter_verdict(&resp);
-    Ok(())
-}
-
-/// Pretty-print the bench-gate verdict returned by the evaluate endpoint.
-fn print_adapter_verdict(v: &serde_json::Value) {
-    let base = v.get("acceptance_base").and_then(|x| x.as_f64()).unwrap_or(0.0);
-    let adapter = v.get("acceptance_adapter").and_then(|x| x.as_f64()).unwrap_or(0.0);
-    let promoted = v.get("promoted").and_then(|x| x.as_bool()).unwrap_or(false);
-    let reason = v.get("reason").and_then(|x| x.as_str()).unwrap_or("");
-
-    println!();
-    println!("  {}", "── bench-gate verdict ──".cyan());
-    println!("  Acceptance (base):     {:.2}", base);
-    println!("  Acceptance (adapter):  {:.2}", adapter);
-    if let Some(q) = v.get("quality_delta").and_then(|x| x.as_f64()) {
-        println!("  Codegen quality delta: {:+.2}", q);
-    }
-    if let Some(t) = v.get("throughput_delta_pct").and_then(|x| x.as_f64()) {
-        println!("  Throughput delta:      {:+.1}%", t);
-    }
-    if promoted {
-        println!("  {} {}", "PROMOTED".green().bold(), reason.dimmed());
-    } else {
-        println!("  {} {}", "NOT promoted".yellow(), reason.dimmed());
-    }
-    println!();
-}
-
-/// `hex inference corpus build <expert> [--dry-run]` — extract an auditable LoRA
-/// training corpus from hex's own ADRs/specs/exemplars (ADR-2606161300 §2).
-async fn corpus_build_cmd(expert: &str, dry_run: bool) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let body = serde_json::json!({ "expert": expert, "dry_run": dry_run });
-    // Augmentation may issue tier-model calls — use the long-timeout client.
-    let manifest = nexus.post_long("/api/inference/corpus/build", &body).await?;
-    if let Some(err) = manifest.get("error").and_then(|v| v.as_str()) {
-        println!("  {} corpus build failed: {}", "✗".red(), err);
-        anyhow::bail!("corpus build failed: {err}");
-    }
-    print_corpus_manifest(&manifest, dry_run);
-    Ok(())
-}
-
-/// `hex inference corpus list` — known experts + their current manifest.
-async fn corpus_list_cmd() -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let resp = nexus.get("/api/inference/corpus/list").await?;
-    let experts = resp.get("experts").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-
-    println!();
-    println!("  {}", "── LoRA idiom experts ──".cyan());
-    for e in &experts {
-        let name = e.get("expert").and_then(|v| v.as_str()).unwrap_or("?");
-        let manifest = e.get("manifest");
-        let built = manifest.map(|m| !m.is_null()).unwrap_or(false);
-        if built {
-            let count = manifest
-                .and_then(|m| m.get("record_count"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let hash = manifest
-                .and_then(|m| m.get("content_hash"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            println!("  {} {:<18} {} records · hash {}", "●".green(), name, count, hash.dimmed());
-        } else {
-            println!("  {} {:<18} {}", "○".yellow(), name, "not built".dimmed());
-        }
-    }
-    println!();
-    Ok(())
-}
-
-/// Pretty-print a CorpusManifest JSON returned by the nexus build endpoint.
-fn print_corpus_manifest(m: &serde_json::Value, dry_run: bool) {
-    let expert = m.get("expert").and_then(|v| v.as_str()).unwrap_or("?");
-    let version = m.get("corpus_version").and_then(|v| v.as_str()).unwrap_or("?");
-    let count = m.get("record_count").and_then(|v| v.as_u64()).unwrap_or(0);
-    let hash = m.get("content_hash").and_then(|v| v.as_str()).unwrap_or("?");
-
-    println!();
-    println!("  {}", format!("── corpus: {expert} ──").cyan());
-    if dry_run {
-        println!("  {}", "(dry-run — nothing written)".dimmed());
-    }
-    println!("  Records:        {count}");
-    println!("  Corpus version: {version}");
-    println!("  Content hash:   {hash}");
-    if let Some(globs) = m.get("source_globs").and_then(|v| v.as_array()) {
-        println!("  Source globs:");
-        for g in globs {
-            if let Some(s) = g.as_str() {
-                println!("    • {}", s.dimmed());
-            }
-        }
-    }
-    if !dry_run {
-        println!("  {}", format!("Written to .hex/corpus/{expert}/").dimmed());
     }
 }
 
@@ -784,31 +453,29 @@ async fn add_provider(
         }
     };
 
-    // Register with nexus if running
-    let client = NexusClient::from_env();
-    if client.ensure_running().await.is_ok() {
-        let mut body = serde_json::json!({
-            "id": provider_id,
-            "provider": provider_type,
-            "url": url.trim_end_matches('/'),
-            "model": model_name,
-            "models_json": models_json,
-            "requires_auth": key.is_some(),
-            "secret_key": key.unwrap_or(""),
-        });
-        if let Some(ref q) = resolved_quantization {
-            body["quantization"] = serde_json::Value::String(q.clone());
-        }
-        let body = body;
-
-        match client.post("/api/inference/register", &body).await {
-            Ok(_) => {
-                println!("  {} Registered with hex-nexus", "✓".green());
-            }
-            Err(e) => println!("  {} Nexus registration failed: {}", "!".yellow(), e),
-        }
-    } else {
-        println!("  {} hex-nexus not running — provider saved locally only", "!".yellow());
+    // Write the registry (ADR-2608241500 P6.2). This used to POST
+    // /api/inference/register, which wrote a SpacetimeDB row, which the daemon
+    // then preloaded back out of this same file on its next startup. The file
+    // was always the source of truth; the database was a copy.
+    let models: Vec<String> = serde_json::from_str(&models_json)
+        .unwrap_or_else(|_| vec![model_name.to_string()]);
+    let endpoint = hex_infer::Endpoint {
+        id: provider_id.to_string(),
+        url: url.trim_end_matches('/').to_string(),
+        provider: provider_type.to_string(),
+        model: model_name.to_string(),
+        models,
+        status: "unknown".to_string(),
+        requires_auth: key.is_some(),
+        secret_key: key.unwrap_or("").to_string(),
+        health_checked_at: String::new(),
+        quality_score: 0.0,
+        quantization_level: resolved_quantization.clone().unwrap_or_default(),
+    };
+    match hex_infer::registry::upsert(endpoint) {
+        Ok(()) => println!("  {} Written to {}", "✓".green(),
+                           hex_infer::registry::registry_path().display()),
+        Err(e) => anyhow::bail!("could not write the inference registry: {e}"),
     }
 
     println!();
@@ -823,8 +490,6 @@ async fn add_provider(
     println!();
     println!("Use with hex-agent:");
     println!("  HEX_OLLAMA_HOST={} HEX_OLLAMA_MODEL={} hex-agent --project-dir .", url, model_name);
-
-    write_inference_cache().await;
     Ok(())
 }
 
@@ -893,30 +558,25 @@ async fn add_from_template(
             if m.coding_optimized { "(code-optimized)".green() } else { "".normal() });
     }
 
-    // Register with nexus
-    let client = NexusClient::from_env();
-    if client.ensure_running().await.is_ok() {
-        let body = serde_json::json!({
-            "id": provider_id,
-            "provider": template.provider_type,
-            "url": template.base_url.trim_end_matches('/'),
-            "model": model_ids.first().unwrap_or(&"default".to_string()),
-            "models_json": models_json,
-            "requires_auth": !api_key.is_empty(),
-            "secret_key": api_key,
-            "quantization": quantization,
-            "rate_limit_rpm": template.rate_limits.rpm,
-            "rate_limit_tpm": template.rate_limits.tpm,
-            "is_free_tier": template.is_free_tier,
-            "cost_per_input_mtok": template.cost.input_per_mtok,
-            "cost_per_output_mtok": template.cost.output_per_mtok,
-        });
-        match client.post("/api/inference/register", &body).await {
-            Ok(_) => println!("  {} Registered with hex-nexus", "✓".green()),
-            Err(e) => println!("  {} Nexus registration failed: {}", "!".yellow(), e),
-        }
-    } else {
-        println!("  {} hex-nexus not running — provider saved locally only", "!".yellow());
+    // Write the registry. The rate-limit and cost fields the daemon stored
+    // alongside the endpoint went with its telemetry; what routing needs is
+    // where to send a request and which key opens it.
+    let endpoint = hex_infer::Endpoint {
+        id: provider_id.to_string(),
+        url: template.base_url.trim_end_matches('/').to_string(),
+        provider: template.provider_type.to_string(),
+        model: model_ids.first().cloned().unwrap_or_else(|| "default".to_string()),
+        models: model_ids.clone(),
+        status: "unknown".to_string(),
+        requires_auth: !api_key.is_empty(),
+        secret_key: api_key.clone(),
+        health_checked_at: String::new(),
+        quality_score: 0.0,
+        quantization_level: quantization.clone(),
+    };
+    match hex_infer::registry::upsert(endpoint) {
+        Ok(()) => println!("  {} Written to the registry", "✓".green()),
+        Err(e) => println!("  {} Registry write failed: {}", "!".yellow(), e),
     }
 
     println!();
@@ -925,8 +585,6 @@ async fn add_from_template(
     if template.is_free_tier {
         println!("  Cost: {} (free tier)", "$0.00".green());
     }
-
-    write_inference_cache().await;
     Ok(())
 }
 
@@ -1011,159 +669,35 @@ async fn discover_free_tier() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Show inference cost attribution and provider statistics (ADR-2026-04-05-2125).
-/// `hex inference usage` — durable per-model usage from inference_log.
-async fn usage_report(since: Option<&str>, model: Option<&str>, limit: u32) -> anyhow::Result<()> {
-    let client = NexusClient::from_env();
-    println!("{}", "── Inference Usage (durable — from inference_log) ──".cyan());
-    println!();
-    if client.ensure_running().await.is_err() {
-        println!("{} hex-nexus not running — cannot fetch usage", "✗".red());
-        return Ok(());
-    }
-
-    let mut path = format!("/api/inference/usage?limit={}", limit);
-    if let Some(s) = since {
-        path.push_str(&format!("&since={}", s));
-    }
-    if let Some(m) = model {
-        path.push_str(&format!("&model={}", m.replace('/', "%2F")));
-    }
-
-    match client.get(&path).await {
-        Ok(data) => {
-            let rows = data.get("usage").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            if rows.is_empty() {
-                println!("  No matching completions in inference_log.");
-                return Ok(());
-            }
-            println!(
-                "  {:<28} {:<14} {:>8} {:>10} {:>10} {:>9} {:>9}",
-                "MODEL", "PROVIDER", "REQS", "IN_TOK", "OUT_TOK", "P50(ms)", "P99(ms)"
-            );
-            println!("  {}", "─".repeat(94));
-            for r in &rows {
-                let g = |k: &str| r.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
-                let s = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("");
-                println!(
-                    "  {:<28} {:<14} {:>8} {:>10} {:>10} {:>9} {:>9}",
-                    s("model"), s("provider"), g("requests"),
-                    g("input_tokens"), g("output_tokens"), g("p50_ms"), g("p99_ms")
-                );
-            }
-            let total = data.get("total_completions").and_then(|v| v.as_u64()).unwrap_or(0);
-            println!();
-            println!("  {} completions counted (source: inference_log)", total);
-        }
-        Err(_) => {
-            println!("  Usage endpoint not available. Ensure hex-nexus is rebuilt.");
-        }
-    }
-    Ok(())
+/// The registered backends in the JSON shape `/api/inference/endpoints`
+/// returned.
+///
+/// A shim, deliberately. Half a dozen call sites below read `qualityScore`,
+/// `quantizationLevel` and friends off a `serde_json::Value`; handing them the
+/// same shape from the registry file keeps the change to where the rows come
+/// from, rather than rewriting six blocks of display code that were not wrong.
+fn registry_rows() -> Vec<serde_json::Value> {
+    hex_infer::registry::load()
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "id": e.id,
+                "provider": e.provider,
+                "url": e.url,
+                "model": e.model,
+                "models": e.models,
+                "status": e.status,
+                "requiresAuth": e.requires_auth,
+                "apiKeyRef": e.secret_key,
+                "healthCheckedAt": e.health_checked_at,
+                "qualityScore": e.quality_score,
+                "quantizationLevel": e.quantization_level,
+            })
+        })
+        .collect()
 }
-
-async fn inference_stats() -> anyhow::Result<()> {
-    let client = NexusClient::from_env();
-    println!("{}", "── Inference Cost Attribution (ADR-2026-04-05-2125) ──".cyan());
-    println!();
-
-    if client.ensure_running().await.is_err() {
-        println!("{} hex-nexus not running — cannot fetch stats", "✗".red());
-        return Ok(());
-    }
-
-    // Fetch provider stats from nexus
-    match client.get("/api/inference/stats").await {
-        Ok(data) => {
-            // Provider distribution
-            if let Some(providers) = data.get("providers").and_then(|v| v.as_array()) {
-                println!("{}", "  Provider Distribution:".cyan());
-                for p in providers {
-                    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                    let requests = p.get("requests").and_then(|v| v.as_u64()).unwrap_or(0);
-                    // Server emits input_tokens/output_tokens separately; aggregate
-                    // for display. Reading a flat `tokens` field always returned
-                    // 0 because no such field exists on ProviderCostStats — the
-                    // wire shape diverged from this CLI without anyone noticing.
-                    let input = p.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let output = p.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let tokens = input + output;
-                    let cost = p.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let is_free = p.get("is_free_tier").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let cost_str = if is_free {
-                        "$0.00 (free)".to_string().green().to_string()
-                    } else {
-                        format!("${:.4}", cost).to_string()
-                    };
-                    println!("    {} — {} requests, {}K tokens, {}", name, requests,
-                        tokens / 1000, cost_str);
-                }
-            }
-            // Cost summary
-            if let Some(summary) = data.get("summary") {
-                println!();
-                let actual = summary.get("actual_cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let counterfactual = summary.get("counterfactual_cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let savings_pct = if counterfactual > 0.0 {
-                    (1.0 - actual / counterfactual) * 100.0
-                } else {
-                    0.0
-                };
-                println!("{}", "  Cost Summary:".cyan());
-                println!("    Actual cost:        ${:.4}", actual);
-                println!("    Frontier equivalent: ${:.4}", counterfactual);
-                println!("    Savings:            {:.1}%", savings_pct);
-            }
-        }
-        Err(_) => {
-            println!("  Stats endpoint not available. Ensure hex-nexus is updated.");
-            println!("  Stats are collected per-session and reset on nexus restart.");
-        }
-    }
-
-    // Show free tier utilization
-    println!();
-    println!("{}", "  Free Tier Utilization:".cyan());
-    match client.get("/api/inference/rate-state").await {
-        Ok(data) => {
-            if let Some(providers) = data.get("providers").and_then(|v| v.as_array()) {
-                for p in providers {
-                    let name = p.get("provider_id").and_then(|v| v.as_str()).unwrap_or("?");
-                    let rpm_used = p.get("requests_this_minute").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let rpm_limit = p.get("rpm_limit").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let daily_used = p.get("tokens_today").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let daily_limit = p.get("daily_token_limit").and_then(|v| v.as_u64());
-                    let circuit = p.get("circuit_state").and_then(|v| v.as_str()).unwrap_or("closed");
-
-                    let circuit_icon = match circuit {
-                        "open" => "⊘".red(),
-                        "half_open" => "◐".yellow(),
-                        _ => "●".green(),
-                    };
-
-                    print!("    {} {} — {}/{} RPM", circuit_icon, name, rpm_used, rpm_limit);
-                    if let Some(limit) = daily_limit {
-                        let pct = if limit > 0 { daily_used as f64 / limit as f64 * 100.0 } else { 0.0 };
-                        print!(", {}K/{}K daily ({:.0}%)", daily_used / 1000, limit / 1000, pct);
-                    }
-                    println!();
-                }
-            } else {
-                println!("    No rate state data available.");
-            }
-        }
-        Err(_) => {
-            println!("    Rate state not available (nexus may need update).");
-        }
-    }
-
-    Ok(())
-}
-
 
 async fn list_providers() -> anyhow::Result<()> {
-    let client = NexusClient::from_env();
-
     println!("{}", "── Inference Providers ──".cyan());
     println!();
 
@@ -1196,64 +730,47 @@ async fn list_providers() -> anyhow::Result<()> {
         println!("  No providers configured via environment variables.");
     }
 
-    // Query nexus for registered providers
-    if client.ensure_running().await.is_ok() {
-        println!();
-        println!("{}", "── Nexus-Registered Providers ──".cyan());
-        match client.get("/api/inference/endpoints").await {
-            Ok(data) => {
-                let endpoints = data.get("endpoints").and_then(|v| v.as_array());
-                if let Some(arr) = endpoints {
-                    if arr.is_empty() {
-                        println!("  No providers registered in nexus.");
-                    }
-                    for p in arr {
-                        let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-                        let provider = p.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
-                        let url = p.get("url").and_then(|v| v.as_str()).unwrap_or("?");
-                        let model = p.get("model").and_then(|v| v.as_str()).unwrap_or("default");
-                        let status = p.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
-                        let quant = p.get("quantizationLevel").and_then(|v| v.as_str()).unwrap_or("?");
-                        let quality = p.get("qualityScore").and_then(|v| v.as_f64())
-                            .map(|f| format!(" q={:.2}", f))
-                            .unwrap_or_default();
-                        let icon = if status == "healthy" || status == "ok" { "●".green() } else { "○".yellow() };
-                        println!("  {} {} ({}) — {} [model: {}] [quant: {}{}]", icon, id, provider, url, model, quant, quality);
-                    }
-                } else {
-                    println!("  No providers registered in nexus.");
-                }
-            }
-            Err(_) => println!("  Could not fetch providers from nexus."),
+    // The registry file (ADR-2608241500 P6.2). The daemon served these from
+    // SpacetimeDB, which it had preloaded from this same file on startup.
+    println!();
+    println!("{}", "── Registered Backends ──".cyan());
+    let endpoints = hex_infer::registry::load();
+    if endpoints.is_empty() {
+        println!("  None registered in {}.", hex_infer::registry::registry_path().display());
+    }
+    for e in &endpoints {
+        let icon = if e.status == "healthy" || e.status == "ok" {
+            "●".green()
+        } else {
+            "○".yellow()
+        };
+        let quality =
+            if e.quality_score > 0.0 { format!(" q={:.2}", e.quality_score) } else { String::new() };
+        let quant = if e.quantization_level.is_empty() { "?" } else { &e.quantization_level };
+        println!(
+            "  {} {} ({}) — {} [model: {}] [quant: {}{}]",
+            icon, e.id, e.provider, e.url, e.model, quant, quality
+        );
+        if e.models.len() > 1 {
+            println!("      serves: {}", e.models.join(", ").dimmed());
         }
     }
 
     println!();
-    println!("Register new: hex inference add ollama http://host:11434 --model qwen3:32b");
+    println!("Register new: hex config inference add ollama http://host:11434 --model <name>");
 
     Ok(())
 }
 
 async fn test_provider(target: Option<&str>, all: bool) -> anyhow::Result<()> {
-    let nexus = crate::nexus_client::NexusClient::from_env();
 
     // ── --all: calibrate every uncalibrated provider ────────────────────────
     if all {
-        if nexus.ensure_running().await.is_err() {
-            println!("{} hex-nexus not running — cannot list providers", "✗".red());
+        let endpoints = registry_rows();
+        if endpoints.is_empty() {
+            println!("{} No backends registered", "!".yellow());
             return Ok(());
         }
-        let endpoints = match nexus.get("/api/inference/endpoints").await {
-            Ok(v) => v.get("endpoints").and_then(|e| e.as_array()).cloned(),
-            Err(e) => {
-                println!("{} Failed to fetch providers: {}", "✗".red(), e);
-                return Ok(());
-            }
-        };
-        let Some(endpoints) = endpoints else {
-            println!("{} No providers registered", "!".yellow());
-            return Ok(());
-        };
 
         let uncalibrated: Vec<_> = endpoints.iter()
             .filter(|p| p.get("qualityScore").is_none() || p.get("qualityScore").map(|v| v.is_number()).unwrap_or(false))
@@ -1312,14 +829,10 @@ async fn test_provider(target: Option<&str>, all: bool) -> anyhow::Result<()> {
             provider_type: ptype.to_string(),
             model: String::new(),
         })
-    } else if nexus.ensure_running().await.is_ok() {
-        let endpoints = nexus.get("/api/inference/endpoints").await
-            .ok()
-            .and_then(|v| v.get("endpoints").and_then(|e| e.as_array()).cloned());
-
+    } else {
+        let endpoints = registry_rows();
         let matches: Vec<_> = endpoints
             .into_iter()
-            .flatten()
             .filter(|p| {
                 let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 // Exact match or prefix match (e.g. "openrouter" matches "openrouter-meta-llama-*")
@@ -1349,8 +862,6 @@ async fn test_provider(target: Option<&str>, all: bool) -> anyhow::Result<()> {
                 model,
             }
         })
-    } else {
-        None
     };
 
     let Some(record) = record else {
@@ -1384,7 +895,6 @@ fn extract_primary_model(val: Option<&serde_json::Value>) -> String {
 }
 
 async fn test_single_provider(id: &str, url: &str, provider_type: &str, model_name: &str) -> anyhow::Result<()> {
-    let nexus = crate::nexus_client::NexusClient::from_env();
     let http_infer = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()?;
@@ -1396,7 +906,7 @@ async fn test_single_provider(id: &str, url: &str, provider_type: &str, model_na
             .or_else(|| {
                 tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(async {
-                        nexus.get("/api/secrets/vault/OPENROUTER_API_KEY").await.ok()
+                        std::env::var("OPENROUTER_API_KEY").ok().map(serde_json::Value::String)
                             .and_then(|v| v.get("value").and_then(|s| s.as_str()).map(|s| s.to_string()))
                             .filter(|s| !s.is_empty())
                     })
@@ -1457,15 +967,23 @@ async fn test_single_provider(id: &str, url: &str, provider_type: &str, model_na
                 println!("  {} quality_score = {:.2}  (latency: {:+.2}, sanity: {:+.2})",
                     "ℹ".cyan(), quality_score, latency_bonus, sanity_bonus);
 
-                if nexus.ensure_running().await.is_ok() {
-                    let patch_body = serde_json::json!({ "quality_score": quality_score });
-                    match nexus.patch(&format!("/api/inference/endpoints/{}", id), &patch_body).await {
-                        Ok(_) => {
-                            println!("  {} Calibration saved — active in model router", "✓".green());
-                            write_inference_cache().await;
+                // Persist the score to the registry file (ADR-2608241500 P6.2).
+                let mut all = hex_infer::registry::load();
+                match all.iter_mut().find(|e| e.id == id) {
+                    Some(e) => {
+                        e.quality_score = quality_score;
+                        e.status = "healthy".to_string();
+                        e.health_checked_at = chrono::Utc::now().to_rfc3339();
+                        match hex_infer::registry::save(&all) {
+                            Ok(()) => println!("  {} Calibration saved", "✓".green()),
+                            Err(e) => println!("  {} Could not save calibration: {}", "!".yellow(), e),
                         }
-                        Err(e) => println!("  {} Could not save calibration: {}", "!".yellow(), e),
                     }
+                    None => println!(
+                        "  {} '{}' is not in the registry — score not saved",
+                        "!".yellow(),
+                        id
+                    ),
                 }
             }
             Ok(resp) => {
@@ -1588,6 +1106,20 @@ async fn test_single_provider(id: &str, url: &str, provider_type: &str, model_na
     Ok(())
 }
 
+/// Is this backend answering? A live check, not the stored `status` field.
+///
+/// Ollama and the OpenAI-compatible family advertise their models at different
+/// paths, and that difference is the whole reason this is not a plain GET.
+async fn probe(http: &reqwest::Client, provider: &str, url: &str) -> bool {
+    let base = url.trim_end_matches('/');
+    let path = if provider == "ollama" { "/api/tags" } else { "/v1/models" };
+    http.get(format!("{base}{path}"))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
 async fn discover_ollama(prune: bool) -> anyhow::Result<()> {
     println!("{}", "── Discovering Inference Providers ──".cyan());
     println!();
@@ -1598,82 +1130,49 @@ async fn discover_ollama(prune: bool) -> anyhow::Result<()> {
 
     let mut found = 0;
 
-    // ── 1. Query SpacetimeDB via nexus (source of truth) ──────────
-    let client = NexusClient::from_env();
+    // ── 1. What is already registered (the file is the source of truth) ──
+    //
+    // This used to query the daemon, which read SpacetimeDB, which it had
+    // preloaded from this same file on startup. Reachability is still a live
+    // probe rather than the stored `status` flag — a cached "healthy" tells
+    // you what was true once.
     let mut registered_urls: Vec<String> = Vec::new();
     let mut registered_ids: Vec<String> = Vec::new();
 
-    if client.ensure_running().await.is_ok() {
-        println!("{}", "── Registered Providers (SpacetimeDB) ──".cyan());
-        match client.get("/api/inference/endpoints").await {
-                Ok(providers) => {
-                    if let Some(arr) = providers.get("endpoints").and_then(|e| e.as_array()) {
-                        for p in arr {
-                            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-                            let ptype = p.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
-                            let url = p.get("url").and_then(|v| v.as_str()).unwrap_or("?");
+    println!("{}", "── Registered Backends ──".cyan());
+    let registered = hex_infer::registry::load();
+    if registered.is_empty() {
+        println!("  None registered yet.");
+    }
+    for e in &registered {
+        let reachable = probe(&http, &e.provider, &e.url).await;
+        let icon = if reachable { "●".green() } else { "○".red() };
+        let status = if reachable { "online" } else { "offline" };
+        println!("  {} {} ({}) — {} [{}]", icon, e.id, e.provider, e.url, status);
+        registered_urls.push(e.url.clone());
+        registered_ids.push(e.id.clone());
+        if reachable {
+            found += 1;
+        }
+    }
+    println!();
 
-                        // Verify registered providers are still reachable (live check, not cached healthy flag)
-                        let reachable = if ptype == "ollama" {
-                            http.get(format!("{}/api/tags", url.trim_end_matches('/')))
-                                .send().await
-                                .map(|r| r.status().is_success())
-                                .unwrap_or(false)
-                        } else {
-                            http.get(format!("{}/v1/models", url.trim_end_matches('/')))
-                                .send().await
-                                .map(|r| r.status().is_success())
-                                .unwrap_or(false)
-                        };
-
-                        let icon = if reachable { "●".green() } else { "○".red() };
-                        let status = if reachable { "online" } else { "offline" };
-                        println!("  {} {} ({}) — {} [{}]", icon, id, ptype, url, status);
-                        registered_urls.push(url.to_string());
-                        registered_ids.push(id.to_string());
-                        if reachable { found += 1; }
-                    }
-                    if arr.is_empty() {
-                        println!("  No providers registered yet.");
-                    }
-                }
+    // ── Prune: drop backends that no longer answer ────
+    if prune && !registered.is_empty() {
+        println!("{}", "── Pruning unreachable backends ──".cyan());
+        let mut kept: Vec<hex_infer::Endpoint> = Vec::new();
+        for e in registered {
+            if probe(&http, &e.provider, &e.url).await {
+                println!("  {} {} OK", "✓".green(), e.id);
+                kept.push(e);
+            } else {
+                println!("  {} Removed {} (unreachable)", "✗".red(), e.id);
             }
-            Err(_) => {
-                println!("  Provider registry endpoint not available.");
-            }
+        }
+        if let Err(err) = hex_infer::registry::save(&kept) {
+            println!("  {} Could not write the registry: {}", "!".yellow(), err);
         }
         println!();
-
-        // ── Prune: remove providers that are unreachable ────
-        if prune && !registered_ids.is_empty() {
-            println!("{}", "── Pruning unhealthy providers ──".cyan());
-            match client.get("/api/inference/endpoints").await {
-                Ok(providers) => {
-                    if let Some(arr) = providers.get("endpoints").and_then(|e| e.as_array()) {
-                        for p in arr {
-                            let pid = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
-                            let ptype = p.get("provider").and_then(|v| v.as_str()).unwrap_or("");
-                            let url_val = p.get("url").and_then(|v| v.as_str()).unwrap_or("?");
-                            let reachable = if ptype == "ollama" {
-                                http.get(format!("{}/api/tags", url_val.trim_end_matches('/')))
-                                    .send().await.map(|r| r.status().is_success()).unwrap_or(false)
-                            } else {
-                                http.get(format!("{}/v1/models", url_val.trim_end_matches('/')))
-                                    .send().await.map(|r| r.status().is_success()).unwrap_or(false)
-                            };
-                            if !reachable {
-                                let _ = client.delete(&format!("/api/inference/endpoints/{}", pid)).await;
-                                println!("  {} Removed {} (unreachable)", "✗".red(), pid);
-                            } else {
-                                println!("  {} {} OK", "✓".green(), pid);
-                            }
-                        }
-                    }
-                }
-                Err(e) => println!("  {} Could not fetch providers: {}", "!".yellow(), e),
-            }
-            println!();
-        }
     }
 
     // ── 2. LAN scan for unregistered Ollama instances ─────────────
@@ -1744,24 +1243,14 @@ async fn discover_openrouter(filter: Option<&str>, min_context: Option<u64>) -> 
     // Check for API key
     let api_key = match std::env::var("OPENROUTER_API_KEY") {
         Ok(key) => key,
-        Err(_) => {
-            // Try hex secrets vault
-            let client = NexusClient::from_env();
-            if let Ok(()) = client.ensure_running().await {
-                match client.get("/api/secrets/vault/OPENROUTER_API_KEY").await {
-                    Ok(data) => data.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    Err(_) => String::new(),
-                }
-            } else {
-                String::new()
-            }
-        }
+        // The daemon's secrets vault is gone — a key is an environment
+        // variable, which is how it reached the vault in the first place.
+        Err(_) => String::new(),
     };
 
     if api_key.is_empty() {
         println!("  {} OPENROUTER_API_KEY not set.", "✗".red());
-        println!("  Set it with: hex secrets set OPENROUTER_API_KEY sk-or-...");
-        println!("  Or export:   export OPENROUTER_API_KEY=sk-or-...");
+        println!("  Set it with: export OPENROUTER_API_KEY=sk-or-...");
         return Ok(());
     }
 
@@ -1793,9 +1282,6 @@ async fn discover_openrouter(filter: Option<&str>, min_context: Option<u64>) -> 
     let min_ctx = min_context.unwrap_or(0);
     let mut count = 0;
     let mut registered = 0;
-
-    let client = NexusClient::from_env();
-    let nexus_running = client.ensure_running().await.is_ok();
 
     for model in models {
         let id = model.get("id").and_then(|v| v.as_str()).unwrap_or("");
@@ -1841,50 +1327,40 @@ async fn discover_openrouter(filter: Option<&str>, min_context: Option<u64>) -> 
             tool_badge,
         );
 
-        // Register with nexus if running
-        if nexus_running {
-            let reg_body = serde_json::json!({
-                "id": format!("openrouter-{}", id.replace('/', "-")),
-                "provider": "openrouter",
-                "url": "https://openrouter.ai/api/v1",
-                "model": id,
-                "models_json": serde_json::to_string(&vec![id]).unwrap_or_default(),
-                "requires_auth": true,
-                "secret_key": "OPENROUTER_API_KEY",
-                "context_window": context_length as u32,
-            });
-
-            if client.post("/api/inference/register", &reg_body).await.is_ok() {
-                registered += 1;
-            } // Silent — don't spam on registration failures
+        // Write it to the registry. Silent on failure: a discovery listing
+        // should not stop because one entry could not be recorded.
+        let endpoint = hex_infer::Endpoint {
+            id: format!("openrouter-{}", id.replace('/', "-")),
+            url: "https://openrouter.ai/api/v1".to_string(),
+            provider: "openrouter".to_string(),
+            model: id.to_string(),
+            models: vec![id.to_string()],
+            status: "unknown".to_string(),
+            requires_auth: true,
+            secret_key: "OPENROUTER_API_KEY".to_string(),
+            health_checked_at: String::new(),
+            quality_score: 0.0,
+            quantization_level: "cloud".to_string(),
+        };
+        if hex_infer::registry::upsert(endpoint).is_ok() {
+            registered += 1;
         }
 
         count += 1;
     }
 
     println!();
-    println!("{} {} models found, {} registered with nexus.", "✓".green(), count, registered);
-
-    if !nexus_running {
-        println!("  {} hex-nexus not running — models listed but not registered", "!".yellow());
-        println!("  Start nexus: hex nexus start");
-    }
+    println!("{} {} models found, {} registered.", "✓".green(), count, registered);
 
     Ok(())
 }
 
 async fn remove_provider(provider_id: &str) -> anyhow::Result<()> {
-    let client = NexusClient::from_env();
-    client.ensure_running().await?;
-
-    match client.delete(
-        &format!("/api/inference/endpoints/{}", provider_id),
-    ).await {
-        Ok(_) => println!("{} Removed provider: {}", "✓".green(), provider_id),
-        Err(e) => println!("{} Failed to remove: {}", "✗".red(), e),
+    match hex_infer::registry::remove(provider_id) {
+        Ok(true) => println!("{} Removed backend: {}", "✓".green(), provider_id),
+        Ok(false) => println!("{} No backend with id '{}'", "!".yellow(), provider_id),
+        Err(e) => anyhow::bail!("could not write the inference registry: {e}"),
     }
-
-    write_inference_cache().await;
     Ok(())
 }
 
@@ -1900,6 +1376,21 @@ const DEFAULT_MODELS: &[(&str, &str)] = &[
     ("meta-llama/llama-4-maverick","general purpose"),
 ];
 
+/// Record a calibration score against a registered backend.
+///
+/// Was a PATCH to `/api/inference/endpoints/{id}`, which the daemon turned
+/// into a SpacetimeDB row update.
+fn save_quality_score(id: &str, score: f32) -> Result<(), String> {
+    let mut all = hex_infer::registry::load();
+    let Some(e) = all.iter_mut().find(|e| e.id == id) else {
+        return Err(format!("'{id}' is not registered"));
+    };
+    e.quality_score = score;
+    e.status = "healthy".to_string();
+    e.health_checked_at = chrono::Utc::now().to_rfc3339();
+    hex_infer::registry::save(&all)
+}
+
 async fn setup_defaults() -> anyhow::Result<()> {
     println!("{}", "── Inference Setup ──".cyan());
     println!();
@@ -1910,7 +1401,7 @@ async fn setup_defaults() -> anyhow::Result<()> {
         .or_else(|| {
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async {
-                    NexusClient::from_env().get("/api/secrets/vault/OPENROUTER_API_KEY").await.ok()
+                    std::env::var("OPENROUTER_API_KEY").ok().map(serde_json::Value::String)
                         .and_then(|v| v.get("value").and_then(|s| s.as_str()).map(|s| s.to_string()))
                         .filter(|s| !s.is_empty())
                 })
@@ -1919,17 +1410,10 @@ async fn setup_defaults() -> anyhow::Result<()> {
 
     let Some(api_key) = api_key else {
         println!("  {} OPENROUTER_API_KEY not set — skipping inference setup.", "!".yellow());
-        println!("  Set it first:  hex secrets set OPENROUTER_API_KEY sk-or-...");
-        println!("  Then re-run:   hex inference setup");
+        println!("  Set it first:  export OPENROUTER_API_KEY=sk-or-...");
+        println!("  Then re-run:   hex config inference setup");
         return Ok(());
     };
-
-    let client = NexusClient::from_env();
-    let nexus_running = client.ensure_running().await.is_ok();
-    if !nexus_running {
-        println!("  {} hex-nexus not running — start it first: hex nexus start", "✗".red());
-        return Ok(());
-    }
 
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -1942,18 +1426,20 @@ async fn setup_defaults() -> anyhow::Result<()> {
         let provider_id = format!("openrouter-{}", model_id.replace('/', "-"));
         print!("  {} {} ({})... ", "→".cyan(), model_id, purpose);
 
-        // Register if not already present
-        let reg_body = serde_json::json!({
-            "id": &provider_id,
-            "provider": "openrouter",
-            "url": or_url,
-            "model": model_id,
-            "models_json": serde_json::to_string(&vec![model_id]).unwrap_or_default(),
-            "requires_auth": true,
-            "secret_key": "OPENROUTER_API_KEY",
-            "quantization": "cloud",
+        // Register it, then calibrate.
+        let _ = hex_infer::registry::upsert(hex_infer::Endpoint {
+            id: provider_id.clone(),
+            url: or_url.to_string(),
+            provider: "openrouter".to_string(),
+            model: model_id.to_string(),
+            models: vec![model_id.to_string()],
+            status: "unknown".to_string(),
+            requires_auth: true,
+            secret_key: "OPENROUTER_API_KEY".to_string(),
+            health_checked_at: String::new(),
+            quality_score: 0.0,
+            quantization_level: "cloud".to_string(),
         });
-        let _ = client.post("/api/inference/register", &reg_body).await;
 
         // Calibrate via test inference
         let chat_url = format!("{}/chat/completions", or_url);
@@ -1989,9 +1475,8 @@ async fn setup_defaults() -> anyhow::Result<()> {
                     else { -0.05 };
                 let quality_score = (0.70_f32 + latency_bonus + if reply_ok { 0.15 } else { 0.0 }).clamp(0.0, 1.0);
 
-                let patch = serde_json::json!({ "quality_score": quality_score });
-                match client.patch(&format!("/api/inference/endpoints/{}", provider_id), &patch).await {
-                    Ok(_) => println!("{} q={:.2} ({}ms)", "✓".green(), quality_score, latency_ms),
+                match save_quality_score(&provider_id, quality_score) {
+                    Ok(()) => println!("{} q={:.2} ({}ms)", "✓".green(), quality_score, latency_ms),
                     Err(e) => {
                         println!("{} inference ok but calibration save failed: {}", "!".yellow(), e);
                         continue;
@@ -2019,9 +1504,8 @@ async fn setup_defaults() -> anyhow::Result<()> {
                             else if latency_ms2 < 20_000 { 0.02 }
                             else { -0.05 };
                         let quality_score = (0.70_f32 + latency_bonus + 0.15).clamp(0.0, 1.0);
-                        let patch = serde_json::json!({ "quality_score": quality_score });
-                        match client.patch(&format!("/api/inference/endpoints/{}", provider_id), &patch).await {
-                            Ok(_) => { println!("{} q={:.2} ({}ms)", "✓".green(), quality_score, latency_ms2); calibrated += 1; }
+                        match save_quality_score(&provider_id, quality_score) {
+                            Ok(()) => { println!("{} q={:.2} ({}ms)", "✓".green(), quality_score, latency_ms2); calibrated += 1; }
                             Err(e) => println!("{} save failed: {}", "!".yellow(), e),
                         }
                     }
@@ -2060,199 +1544,6 @@ struct InferenceTaskPush {
     role: String,
 }
 
-/// Connect to /ws/inference and dispatch incoming tasks autonomously.
-///
-/// Each message received is an InferenceTaskPush. We:
-///   1. Claim the task via PATCH /api/inference/queue/{id} {"status":"claimed"}
-///   2. Spawn a tokio task that calls `claude --dangerously-skip-permissions -p <prompt>`
-///   3. Report result/failure back via PATCH /api/inference/queue/{id}
-///
-/// The loop reconnects on disconnect (5-second backoff).
-async fn watch(agent_id_opt: Option<String>, daemon: bool) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let agent_id = agent_id_opt
-        .or_else(crate::nexus_client::read_session_agent_id)
-        .unwrap_or_else(|| "unknown".to_string());
-
-    if !daemon {
-        let short_id = &agent_id[..8.min(agent_id.len())];
-        println!("{} inference-watch: connecting (agent {})", "⬡".cyan(), short_id);
-    }
-
-    let base_url = nexus.url().to_string();
-    let ws_url = base_url
-        .replace("http://", "ws://")
-        .replace("https://", "wss://");
-    let ws_url = format!("{}/ws/inference", ws_url);
-
-    loop {
-        match connect_and_watch(&ws_url, &agent_id, &base_url, daemon).await {
-            Ok(()) => break,
-            Err(e) => {
-                if !daemon {
-                    eprintln!("{} inference-watch: reconnecting ({})...", "⬡".yellow(), e);
-                }
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn connect_and_watch(
-    ws_url: &str,
-    agent_id: &str,
-    nexus_base: &str,
-    daemon: bool,
-) -> anyhow::Result<()> {
-    use futures_util::StreamExt;
-    use tokio_tungstenite::tungstenite::Message;
-
-    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url).await?;
-
-    // Startup reconciliation: fetch any Pending tasks that were enqueued
-    // before this watch process connected (missed broadcast events).
-    let http = reqwest::Client::new();
-    let pending_url = format!("{}/api/inference/queue/pending", nexus_base);
-    if let Ok(resp) = http.get(&pending_url).send().await {
-        if let Ok(tasks) = resp.json::<Vec<InferenceTaskPush>>().await {
-            for task in tasks {
-                let push_id = task.id.clone();
-                let agent_id_owned = agent_id.to_string();
-                let nexus_base_owned = nexus_base.to_string();
-                let claim_url = format!("{}/api/inference/queue/{}", nexus_base, push_id);
-                let claim_resp = http
-                    .patch(&claim_url)
-                    .header("X-Hex-Agent-Id", &agent_id_owned)
-                    .json(&serde_json::json!({ "status": "claimed" }))
-                    .send()
-                    .await;
-                if claim_resp.map(|r| r.status().is_success()).unwrap_or(false) {
-                    if !daemon {
-                        println!("{} inference-watch: claimed (startup) {}", "⬡".green(), push_id);
-                    }
-                    tokio::spawn(async move {
-                        dispatch_inference_task(task, agent_id_owned, nexus_base_owned).await;
-                    });
-                }
-            }
-        }
-    }
-
-    while let Some(msg) = ws.next().await {
-        match msg? {
-            Message::Text(text) => {
-                if let Ok(push) = serde_json::from_str::<InferenceTaskPush>(&text) {
-                    if !daemon {
-                        println!(
-                            "{} inference-watch: dispatching {}/{}",
-                            "⬡".cyan(),
-                            push.workplan_id,
-                            push.task_id
-                        );
-                    }
-
-                    // Claim the task (CAS — first agent to patch wins).
-                    let claim_url = format!("{}/api/inference/queue/{}", nexus_base, push.id);
-                    let http = reqwest::Client::new();
-                    let claim_resp = http
-                        .patch(&claim_url)
-                        .header("X-Hex-Agent-Id", agent_id)
-                        .json(&serde_json::json!({ "status": "claimed" }))
-                        .send()
-                        .await;
-
-                    let claimed = claim_resp.map(|r| r.status().is_success())
-                        .unwrap_or(false);
-
-                    if claimed {
-                        let push_id = push.id.clone();
-                        let agent_id_owned = agent_id.to_string();
-                        let nexus_base_owned = nexus_base.to_string();
-                        tokio::spawn(async move {
-                            dispatch_inference_task(push, agent_id_owned, nexus_base_owned).await;
-                        });
-                        if !daemon {
-                            println!("{} inference-watch: claimed {}", "⬡".green(), push_id);
-                        }
-                    } else if !daemon {
-                        println!("{} inference-watch: claim lost for {} (another agent won)", "⬡".yellow(), push.id);
-                    }
-                }
-            }
-            Message::Close(_) => break,
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-async fn dispatch_inference_task(push: InferenceTaskPush, agent_id: String, nexus_base: String) {
-    let prompt = format!("HEXFLO_TASK:{}\n\n{}", push.task_id, push.prompt);
-
-    let result = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("claude")
-            .args(["--dangerously-skip-permissions", "-p", &prompt])
-            .output()
-    })
-    .await;
-
-    let http = reqwest::Client::new();
-
-    let url = format!("{}/api/inference/queue/{}", nexus_base, push.id);
-    let body = match result {
-        Ok(Ok(out)) if out.status.success() => {
-            let text = String::from_utf8_lossy(&out.stdout).to_string();
-            let snippet = text[..200.min(text.len())].to_string();
-            serde_json::json!({ "status": "completed", "result": snippet })
-        }
-        Ok(Ok(out)) => {
-            let text = String::from_utf8_lossy(&out.stderr).to_string();
-            let snippet = text[..200.min(text.len())].to_string();
-            serde_json::json!({ "status": "failed", "error": snippet })
-        }
-        Ok(Err(e)) => {
-            serde_json::json!({ "status": "failed", "error": e.to_string() })
-        }
-        Err(e) => {
-            serde_json::json!({ "status": "failed", "error": e.to_string() })
-        }
-    };
-    let _ = http
-        .patch(&url)
-        .header("X-Hex-Agent-Id", &agent_id)
-        .json(&body)
-        .send()
-        .await;
-}
-
-/// `hex inference queue` — list pending inference tasks from the nexus.
-async fn queue_list() -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    let resp = nexus.get("/api/inference/queue/pending").await?;
-    let tasks = resp.as_array().cloned().unwrap_or_default();
-
-    if tasks.is_empty() {
-        println!("{} No pending inference tasks", "⬡".cyan());
-        return Ok(());
-    }
-
-    println!("{} Pending inference tasks:", "⬡".cyan());
-    for t in &tasks {
-        let id = t["id"].as_str().unwrap_or("-");
-        let wid = t["workplan_id"].as_str().unwrap_or("-");
-        let tid = t["task_id"].as_str().unwrap_or("-");
-        let status = t["status"].as_str().unwrap_or("-");
-        let role = t["role"].as_str().unwrap_or("-");
-        println!("  {} — {}/{} [{}] role={}", id, wid, tid, status, role);
-    }
-    Ok(())
-}
-
 // ── Bench command (ADR-2026-04-13-1238) ──────────────────────────────────────────
 
 /// Result of a single benchmark prompt.
@@ -2265,6 +1556,23 @@ struct BenchResult {
     quality_score: f32,
     quality_max: u32,
     quality_details: Vec<(&'static str, bool)>,
+}
+
+/// A benchmark's raw quality points: the 0..1 score scaled by its own maximum.
+///
+/// One named function instead of the same expression in three places. The
+/// float-to-int cast saturates in Rust rather than truncating, so this is not
+/// the bug class the narrowing-cast rule is named for — but the expression was
+/// hard to read three times and is easy to read once.
+fn raw_quality(r: &BenchResult) -> u32 {
+    let raw = r.quality_score * r.quality_max as f32;
+    if !raw.is_finite() || raw <= 0.0 {
+        0
+    } else if raw >= u32::MAX as f32 {
+        u32::MAX
+    } else {
+        raw as u32
+    }
 }
 
 impl BenchResult {
@@ -2574,8 +1882,8 @@ fn compute_tier(results: &[&BenchResult]) -> (f32, u8, &'static str) {
 
     let overall = code_score * 0.5 + reason_score * 0.3 + latency_score * 0.2;
 
-    let code_raw = codegen.map(|r| (r.quality_score * r.quality_max as f32) as u32).unwrap_or(0);
-    let reason_raw = reasoning.map(|r| (r.quality_score * r.quality_max as f32) as u32).unwrap_or(0);
+    let code_raw = codegen.map(|r| raw_quality(&r)).unwrap_or(0);
+    let reason_raw = reasoning.map(|r| raw_quality(&r)).unwrap_or(0);
 
     let (tier, label) = if overall >= 0.85 && reason_raw >= 4 {
         (3, "Tier 3 (Opus-equivalent: planning, specs, validation)")
@@ -2598,7 +1906,7 @@ fn print_bench_results(model: &str, results: &[BenchResult], label: Option<&str>
     println!();
     for r in results {
         let status = if r.quality_score >= 0.6 { "✓".green() } else if r.quality_score >= 0.3 { "~".yellow() } else { "✗".red() };
-        let q = (r.quality_score * r.quality_max as f32) as u32;
+        let q = raw_quality(r);
         println!("  {}  {:<12} {:>5.1}s  ({}/{} quality, {:.0} tok/s)",
             status, r.name, r.wall_secs, q, r.quality_max, r.tok_per_sec());
         for (name, passed) in &r.quality_details {
@@ -2640,7 +1948,6 @@ async fn bench_provider(
     compare: Option<&str>,
     save: bool,
 ) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
@@ -2673,12 +1980,11 @@ async fn bench_provider(
 
     let mut resolved = resolve(target, model_override);
 
-    // Try nexus lookup if not a direct URL/model
-    if (resolved.is_none() || resolved.as_ref().map(|r| r.url.is_empty()).unwrap_or(false))
-        && nexus.ensure_running().await.is_ok()
-    {
-            if let Ok(resp) = nexus.get("/api/inference/endpoints").await {
-                if let Some(endpoints) = resp.get("endpoints").and_then(|e| e.as_array()) {
+    // Registry lookup, if the target is not already a direct URL or model.
+    if resolved.is_none() || resolved.as_ref().map(|r| r.url.is_empty()).unwrap_or(false) {
+            {
+                {
+                    let endpoints = &registry_rows();
                     // Exact ID match or prefix match
                     let found = endpoints.iter().find(|p| {
                         let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
@@ -2699,8 +2005,10 @@ async fn bench_provider(
                     if resolved.is_none() || resolved.as_ref().map(|r| r.url.is_empty()).unwrap_or(false) {
                         let model_target = model_override.unwrap_or(target);
                         let host = endpoints.iter().find(|p| {
-                            let models = p.get("models").and_then(|v| v.as_str()).unwrap_or("");
-                            models.contains(model_target)
+                            p.get("models")
+                                .and_then(|v| v.as_array())
+                                .map(|a| a.iter().any(|m| m.as_str() == Some(model_target)))
+                                .unwrap_or(false)
                         });
                         if let Some(p) = host {
                             resolved = Some(Resolved {
@@ -2720,47 +2028,26 @@ async fn bench_provider(
         return Ok(());
     };
 
-    // Cloud openai-compat providers (e.g. Tenstorrent, vLLM behind a key) store
-    // their API key as a vault reference that only nexus can resolve — and their
-    // base URL often omits `/v1`. Direct CLI calls from bench_chat would send an
-    // empty bearer and mis-detect the endpoint shape. Route these through the
-    // nexus proxy (`{nexus}/v1/chat/completions` with a `hex/<model>` id), which
-    // resolves the vault key and provider type for us. Local Ollama and
-    // OpenRouter-direct targets keep their direct path (measures true latency).
-    let is_cloud_compat = (r.ptype.contains("openai") || r.ptype == "vllm")
-        && !r.url.contains(":11434")
-        && !r.url.contains("openrouter.ai");
-    if is_cloud_compat {
-        if nexus.ensure_running().await.is_ok() {
-            r.url = format!("{}/v1", nexus.url().trim_end_matches('/'));
-            r.ptype = "openai-compat".to_string();
-            r.model = format!("hex/{}", r.model);
-        } else {
-            println!("{} nexus not reachable — cannot bench cloud provider '{}' (vault key needs nexus)", "✗".red(), r.id);
-            return Ok(());
-        }
-    }
+    // Cloud openai-compat backends used to be benched through the daemon's
+    // `/v1` proxy, because their API key was a vault reference only the daemon
+    // could resolve. A key is an environment variable now, so the direct path
+    // works for every backend — and it measures true latency rather than the
+    // latency of a hop through a proxy.
 
-    // OpenRouter targets keep the direct path (to measure true latency), but
-    // bench_chat reads OPENROUTER_API_KEY from the process env — and hex stores
-    // it in the STDB vault, not env. Without this the Bearer header is empty and
-    // every request fails auth, scoring the model 0. Hydrate env from the vault.
+    // An OpenRouter bench with no key in the environment used to be rescued by
+    // reading the daemon's vault. Without a key the Bearer header is empty and
+    // every request fails auth, which scores the model 0 — so say so rather
+    // than letting a configuration gap look like a bad model.
     if (r.ptype == "openrouter" || r.url.contains("openrouter.ai"))
         && std::env::var("OPENROUTER_API_KEY").map(|v| v.trim().is_empty()).unwrap_or(true)
     {
-        if nexus.ensure_running().await.is_ok() {
-            if let Ok(resp) = nexus.get("/api/secrets/vault/OPENROUTER_API_KEY").await {
-                if let Some(k) = resp.get("value").and_then(|v| v.as_str()) {
-                    if !k.trim().is_empty() {
-                        std::env::set_var("OPENROUTER_API_KEY", k);
-                    }
-                }
-            }
-        }
-        if std::env::var("OPENROUTER_API_KEY").map(|v| v.trim().is_empty()).unwrap_or(true) {
-            println!("{} OPENROUTER_API_KEY not in env or vault — bench will fail auth. Set it with `hex secrets set OPENROUTER_API_KEY <key>`", "✗".red());
-            return Ok(());
-        }
+        println!(
+            "{} OPENROUTER_API_KEY is not set — the bench would fail auth and score 0, \
+             which measures configuration, not the model. Set it with: \
+             export OPENROUTER_API_KEY=sk-or-...",
+            "✗".red()
+        );
+        return Ok(());
     }
 
     println!("{}", format!("── hex inference bench: {} via {} ──", r.model, r.id).cyan());
@@ -2833,25 +2120,17 @@ async fn bench_provider(
     // ── Compare mode ────────────────────────────────────────────────────────
     if let Some(baseline_target) = compare {
         // Resolve baseline the same way
-        let mut baseline_resolved: Option<Resolved> = None;
-        if nexus.ensure_running().await.is_ok() {
-            if let Ok(resp) = nexus.get("/api/inference/endpoints").await {
-                if let Some(endpoints) = resp.get("endpoints").and_then(|e| e.as_array()) {
-                    let found = endpoints.iter().find(|p| {
-                        let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                        id == baseline_target || id.starts_with(&format!("{}-", baseline_target))
-                    });
-                    if let Some(p) = found {
-                        baseline_resolved = Some(Resolved {
-                            id: p["id"].as_str().unwrap_or("").to_string(),
-                            url: p["url"].as_str().unwrap_or("").to_string(),
-                            ptype: p["provider"].as_str().unwrap_or("ollama").to_string(),
-                            model: extract_primary_model(p.get("model")),
-                        });
-                    }
-                }
-            }
-        }
+        let baseline_resolved = hex_infer::registry::load()
+            .into_iter()
+            .find(|e| {
+                e.id == baseline_target || e.id.starts_with(&format!("{}-", baseline_target))
+            })
+            .map(|e| Resolved {
+                id: e.id,
+                url: e.url,
+                ptype: e.provider,
+                model: e.model,
+            });
 
         if let Some(bl) = baseline_resolved.filter(|b| !b.url.is_empty()) {
             println!("{}", format!("── Baseline: {} via {} ──", bl.model, bl.id).cyan());
@@ -2869,365 +2148,17 @@ async fn bench_provider(
     if save {
         let refs: Vec<&BenchResult> = results.iter().collect();
         let (overall, tier, _) = compute_tier(&refs);
-        if nexus.ensure_running().await.is_ok() {
-            let patch = serde_json::json!({
-                "quality_score": overall,
-                "tier": tier,
-            });
-            match nexus.patch(&format!("/api/inference/endpoints/{}", r.id), &patch).await {
-                Ok(_) => {
-                    println!("{} Calibration saved (score={:.2}, tier={})", "✓".green(), overall, tier);
-                    write_inference_cache().await;
-                }
-                Err(e) => println!("{} Could not save calibration: {}", "!".yellow(), e),
-            }
-        } else {
-            println!("{} hex-nexus not running — calibration not saved", "!".yellow());
+        match save_quality_score(&r.id, overall) {
+            Ok(()) => println!(
+                "{} Calibration saved (score={:.2}, tier={})",
+                "✓".green(),
+                overall,
+                tier
+            ),
+            Err(e) => println!("{} Could not save calibration: {}", "!".yellow(), e),
         }
     }
 
     Ok(())
 }
 
-/// `hex inference q-report` — fetch the q-report from nexus and display it.
-async fn q_report(
-    tier: Option<String>,
-    task_type: Option<String>,
-    model: Option<String>,
-    sort: &str,
-    limit: u32,
-    format: &str,
-    since: Option<String>,
-    watch: bool,
-) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    loop {
-        let mut params = vec![
-            ("sort".to_string(), sort.to_string()),
-            ("limit".to_string(), limit.to_string()),
-        ];
-        if let Some(ref t) = tier {
-            params.push(("tier".to_string(), t.clone()));
-        }
-        if let Some(ref tt) = task_type {
-            params.push(("task_type".to_string(), tt.clone()));
-        }
-        if let Some(ref m) = model {
-            params.push(("model".to_string(), m.clone()));
-        }
-        if let Some(ref s) = since {
-            params.push(("since".to_string(), s.clone()));
-        }
-
-        let query = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        let body: serde_json::Value = nexus
-            .get(&format!("/api/inference/q-report?{}", query))
-            .await?;
-
-        match format {
-            "json" => println!("{}", serde_json::to_string_pretty(&body)?),
-            "yaml" => println!("{}", serde_yaml::to_string(&body)?),
-            _ => print_q_report_table(&body),
-        }
-
-        if !watch {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(5));
-        print!("\x1B[2J\x1B[1;1H"); // clear screen
-    }
-    Ok(())
-}
-
-/// Classify a numeric 7-day trend value into a display symbol.
-pub fn trend_symbol(value: f64) -> &'static str {
-    if value > 0.0 {
-        "▲"
-    } else if value < 0.0 {
-        "▼"
-    } else {
-        "─"
-    }
-}
-
-/// Format an optional trend_7d float as a human-readable string.
-pub fn format_trend(value: Option<f64>) -> String {
-    match value {
-        Some(v) if v > 0.0 => format!("+{:.3} ▲", v),
-        Some(v) if v < 0.0 => format!("{:.3} ▼", v),
-        Some(_) => "─".to_string(),
-        None => "─".to_string(),
-    }
-}
-
-/// Render q-report JSON body as a plain-text table (no ANSI colour codes).
-pub fn render_q_report_table(body: &serde_json::Value) -> String {
-    use std::fmt::Write;
-
-    let entries = match body.get("entries").and_then(|e| e.as_array()) {
-        Some(arr) if !arr.is_empty() => arr,
-        _ => return "No q-report entries found.".to_string(),
-    };
-
-    let mut out = String::new();
-    writeln!(
-        out,
-        "{:<24} {:<8} {:<16} {:>8} {:>8} {:>8}",
-        "MODEL", "TIER", "TASK TYPE", "VISITS", "Q-VAL", "TREND"
-    )
-    .unwrap();
-    writeln!(out, "{}", "─".repeat(76)).unwrap();
-
-    for entry in entries {
-        let model = entry
-            .get("model")
-            .or_else(|| entry.get("action"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
-        let tier = entry.get("tier").and_then(|v| v.as_str()).unwrap_or("-");
-        let task_type = entry
-            .get("task_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
-        let visits = entry
-            .get("visits")
-            .or_else(|| entry.get("visit_count"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let q_value = entry
-            .get("q_value")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        let trend = entry
-            .get("trend_7d")
-            .and_then(|v| v.as_f64())
-            .map(|f| format_trend(Some(f)))
-            .unwrap_or_else(|| format_trend(None));
-
-        writeln!(
-            out,
-            "{:<24} {:<8} {:<16} {:>8} {:>8.3} {:>8}",
-            model, tier, task_type, visits, q_value, trend
-        )
-        .unwrap();
-    }
-
-    out.trim_end().to_string()
-}
-
-fn print_q_report_table(body: &serde_json::Value) {
-    let entries = match body.get("entries").and_then(|e| e.as_array()) {
-        Some(arr) => arr,
-        None => {
-            println!("{}", "No q-report entries found.".dimmed());
-            return;
-        }
-    };
-
-    if entries.is_empty() {
-        println!("{}", "No q-report entries found.".dimmed());
-        return;
-    }
-
-    println!(
-        "{:<24} {:<8} {:<16} {:>8} {:>10} {:>10} {:>8} {:>8}",
-        "MODEL".bold(),
-        "TIER".bold(),
-        "TASK TYPE".bold(),
-        "VISITS".bold(),
-        "P50 (ms)".bold(),
-        "P99 (ms)".bold(),
-        "TOKENS".bold(),
-        "TREND".bold(),
-    );
-    println!("{}", "─".repeat(100).dimmed());
-
-    for entry in entries {
-        let model = entry.get("model").and_then(|v| v.as_str()).unwrap_or("-");
-        let tier = entry.get("tier").and_then(|v| v.as_str()).unwrap_or("-");
-        let task_type = entry.get("task_type").and_then(|v| v.as_str()).unwrap_or("-");
-        let visits = entry.get("visits").and_then(|v| v.as_u64()).unwrap_or(0);
-        let p50 = entry.get("latency_p50_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let p99 = entry.get("latency_p99_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let tokens = entry.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-        let trend = entry.get("trend_7d").and_then(|v| v.as_str()).unwrap_or("");
-
-        let trend_colored = match trend {
-            t if t.starts_with('+') => t.green().to_string(),
-            t if t.starts_with('-') => t.red().to_string(),
-            t => t.dimmed().to_string(),
-        };
-
-        println!(
-            "{:<24} {:<8} {:<16} {:>8} {:>10.0} {:>10.0} {:>8} {:>8}",
-            model, tier, task_type, visits, p50, p99, tokens, trend_colored,
-        );
-    }
-
-    if let Some(summary) = body.get("summary") {
-        println!("\n{}", "Summary".bold().underline());
-        if let Some(total) = summary.get("total_visits").and_then(|v| v.as_u64()) {
-            println!("  Total visits: {}", total);
-        }
-        if let Some(avg) = summary.get("avg_latency_ms").and_then(|v| v.as_f64()) {
-            println!("  Avg latency:  {:.0} ms", avg);
-        }
-    }
-}
-
-/// `hex inference escalation-report` — read escalation/success keys from HexFlo
-/// memory and print a table of escalation rates per task-tier and model (P4.2).
-async fn escalation_report(json: bool) -> anyhow::Result<()> {
-    let nexus = NexusClient::from_env();
-    nexus.ensure_running().await?;
-
-    // Search for all escalation and success tracking keys
-    let esc_results = nexus
-        .get("/api/hexflo/memory/search?q=escalation:")
-        .await
-        .unwrap_or_else(|_| serde_json::json!({"results": []}));
-    let suc_results = nexus
-        .get("/api/hexflo/memory/search?q=success:")
-        .await
-        .unwrap_or_else(|_| serde_json::json!({"results": []}));
-
-    // Parse results into maps: (tier:model) -> count
-    let mut escalations: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-    let mut successes: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-
-    if let Some(results) = esc_results.get("results").and_then(|r| r.as_array()) {
-        for entry in results {
-            let key = entry.get("key").and_then(|k| k.as_str()).unwrap_or_default();
-            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("{}");
-            // key format: "escalation:{tier}:{model}"
-            let suffix = key.strip_prefix("escalation:").unwrap_or(key);
-            if let Ok(obj) = serde_json::from_str::<serde_json::Value>(value) {
-                let count = obj.get("count").and_then(|c| c.as_u64()).unwrap_or(0);
-                escalations.insert(suffix.to_string(), count);
-            }
-        }
-    }
-
-    if let Some(results) = suc_results.get("results").and_then(|r| r.as_array()) {
-        for entry in results {
-            let key = entry.get("key").and_then(|k| k.as_str()).unwrap_or_default();
-            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("{}");
-            // key format: "success:{tier}:{model}"
-            let suffix = key.strip_prefix("success:").unwrap_or(key);
-            if let Ok(obj) = serde_json::from_str::<serde_json::Value>(value) {
-                let count = obj.get("count").and_then(|c| c.as_u64()).unwrap_or(0);
-                successes.insert(suffix.to_string(), count);
-            }
-        }
-    }
-
-    // Collect all unique tier:model combinations
-    let mut all_keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    all_keys.extend(escalations.keys().cloned());
-    all_keys.extend(successes.keys().cloned());
-
-    if json {
-        let mut findings = Vec::new();
-        for key in &all_keys {
-            let esc_count = escalations.get(key).copied().unwrap_or(0);
-            let suc_count = successes.get(key).copied().unwrap_or(0);
-            let total = esc_count + suc_count;
-            let rate = if total > 0 { esc_count as f64 / total as f64 } else { 0.0 };
-            // Only escalation rates above the threshold are findings — the
-            // detector is for diagnosing tier mis-assignment, not for
-            // surfacing every (tier,model) pair the system has ever used.
-            if rate <= 0.5 {
-                continue;
-            }
-            let parts: Vec<&str> = key.splitn(2, ':').collect();
-            let (tier, model) = if parts.len() == 2 { (parts[0], parts[1]) } else { (key.as_str(), "unknown") };
-            findings.push(serde_json::json!({
-                "tier": tier,
-                "model": model,
-                "success": suc_count,
-                "escalated": esc_count,
-                "rate": rate,
-                "severity": "warning",
-            }));
-        }
-        println!("{}", serde_json::json!({"findings": findings}));
-        return Ok(());
-    }
-
-    if all_keys.is_empty() {
-        println!(
-            "{} No escalation tracking data found. Escalation tracking is recorded when ScaffoldedDispatch runs with a HexFlo handle.",
-            "i".cyan()
-        );
-        return Ok(());
-    }
-
-    // Print header
-    println!(
-        "\n{}\n",
-        "Inference Escalation Report (P4.2)".bold().underline()
-    );
-    println!(
-        "  {:<10} {:<30} {:>10} {:>10} {:>12}",
-        "Tier", "Model", "Success", "Escalated", "Esc. Rate"
-    );
-    println!("  {}", "-".repeat(76));
-
-    let mut any_high = false;
-    for key in &all_keys {
-        let esc_count = escalations.get(key).copied().unwrap_or(0);
-        let suc_count = successes.get(key).copied().unwrap_or(0);
-        let total = esc_count + suc_count;
-        let rate = if total > 0 {
-            esc_count as f64 / total as f64
-        } else {
-            0.0
-        };
-
-        // Split key into tier and model
-        let parts: Vec<&str> = key.splitn(2, ':').collect();
-        let (tier, model) = if parts.len() == 2 {
-            (parts[0], parts[1])
-        } else {
-            (key.as_str(), "unknown")
-        };
-
-        let rate_str = format!("{:.1}%", rate * 100.0);
-        let rate_display = if rate > 0.5 {
-            any_high = true;
-            rate_str.red().bold().to_string()
-        } else if rate > 0.25 {
-            rate_str.yellow().to_string()
-        } else {
-            rate_str.green().to_string()
-        };
-
-        println!(
-            "  {:<10} {:<30} {:>10} {:>10} {:>12}",
-            tier, model, suc_count, esc_count, rate_display
-        );
-    }
-
-    println!();
-    if any_high {
-        println!(
-            "  {} One or more task-tier/model combinations exceed 50%% escalation rate.",
-            "!".yellow().bold()
-        );
-        println!(
-            "    Consider reclassifying these tiers to use a stronger local model,"
-        );
-        println!(
-            "    or adjusting ScaffoldConfig (increase N or max_retries).\n"
-        );
-    }
-
-    Ok(())
-}

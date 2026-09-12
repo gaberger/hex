@@ -1,6 +1,6 @@
 ---
 name: hex-rebuild-cli
-description: Rebuild hex-cli release binary and atomically replace the busy on-PATH binary without stopping running daemons
+description: Rebuild the hex release binary and atomically replace the busy on-PATH copy
 triggers:
   - rebuild hex-cli
   - rebuild hex cli
