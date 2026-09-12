@@ -604,8 +604,15 @@ async fn exec_attempts(task: &DirectTask, repo_root: &std::path::Path, factory: 
                     return result;
                 }
                 Err(e) => {
-                    result.error = Some(format!("commit: {}", e));
-                    return result; // edit good + evidence passed but commit failed — surface it
+                    // The edit is good and the gate passed; only git failed. Keep
+                    // the change, unstage it, and name the half that broke.
+                    let _ = std::process::Command::new("git")
+                        .args(["reset", "-q", "--"])
+                        .arg(&task.file)
+                        .current_dir(repo_root)
+                        .output();
+                    result.error = Some(crate::direct_react::commit_failure_hint(&e));
+                    return result;
                 }
             }
         } else {

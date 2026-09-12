@@ -97,6 +97,17 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
                         println!("  {}", line.dimmed());
                     }
                 }
+                // Name the half that actually failed. This said "did not pass
+                // evidence" for every failure, including a run whose evidence
+                // passed and whose commit did not — which is the common case in
+                // a fresh clone with no git identity.
+                let evidence_passed = r
+                    .get("evidence_passed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if evidence_passed {
+                    anyhow::bail!("evidence passed; the run did not complete (see above)");
+                }
                 anyhow::bail!("direct run did not pass evidence");
             }
         }
