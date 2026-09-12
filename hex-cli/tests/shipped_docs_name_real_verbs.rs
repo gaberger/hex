@@ -316,51 +316,6 @@ Keep this too. Also mine.
 /// looks finished and arrives broken, which is the same failure as a gate that
 /// passes for the wrong reason.
 ///
-/// `<br/>` is fine and becomes a real line break. It is the exception.
-#[test]
-fn mermaid_labels_contain_no_html_github_will_not_render() {
-    const BANNED: &[(&str, &str)] = &[
-        ("<b>", "bold tags print literally under htmlLabels:false"),
-        ("</b>", "bold tags print literally under htmlLabels:false"),
-        ("<i>", "italic tags print literally under htmlLabels:false"),
-        ("&lt;", "HTML entities print literally; use the character itself"),
-        ("&gt;", "HTML entities print literally; use the character itself"),
-        ("&amp;", "HTML entities print literally; use the character itself"),
-        ("&middot;", "HTML entities print literally; use the character itself"),
-        ("&nbsp;", "HTML entities print literally; use the character itself"),
-    ];
-
-    let docs: &[(&str, &str)] = &[
-        ("README.md", include_str!("../../README.md")),
-        ("ARCHITECTURE.md", include_str!("../../ARCHITECTURE.md")),
-    ];
-
-    let mut blocks_seen = 0usize;
-    let mut problems: Vec<String> = Vec::new();
-
-    for (name, body) in docs {
-        let mut rest = *body;
-        while let Some(open) = rest.find("```mermaid") {
-            let after = &rest[open + "```mermaid".len()..];
-            let Some(close) = after.find("```") else { break };
-            let block = &after[..close];
-            blocks_seen += 1;
-            for (needle, why) in BANNED {
-                if block.contains(needle) {
-                    problems.push(format!("{name}: mermaid block contains `{needle}` — {why}"));
-                }
-            }
-            rest = &after[close + 3..];
-        }
-    }
-
-    assert!(
-        blocks_seen >= 5,
-        "only found {blocks_seen} mermaid blocks. The extractor is broken, so this \
-         test would pass without checking anything"
-    );
-    assert!(problems.is_empty(), "{}", problems.join("\n  "));
-}
 
 /// Diagram labels must be quoted and ASCII.
 ///
@@ -372,62 +327,6 @@ fn mermaid_labels_contain_no_html_github_will_not_render() {
 /// Quoting every label removes the whole class, so that is what is checked:
 /// not "is this particular character safe", but "is every label quoted and
 /// plain". Subgraphs are refused for the same reason. They add a parser mode
-/// that buys nothing a plain flowchart cannot express.
-#[test]
-fn mermaid_labels_are_quoted_ascii_and_subgraph_free() {
-    let docs: &[(&str, &str)] = &[
-        ("README.md", include_str!("../../README.md")),
-        ("ARCHITECTURE.md", include_str!("../../ARCHITECTURE.md")),
-    ];
-
-    let mut blocks_seen = 0usize;
-    let mut problems: Vec<String> = Vec::new();
-
-    for (name, body) in docs {
-        let mut rest = *body;
-        while let Some(open) = rest.find("```mermaid") {
-            let after = &rest[open + "```mermaid".len()..];
-            let Some(close) = after.find("```") else { break };
-            let block = &after[..close];
-            blocks_seen += 1;
-
-            for (n, line) in block.lines().enumerate() {
-                let n = n + 1;
-                if let Some(c) = line.chars().find(|c| !c.is_ascii()) {
-                    problems.push(format!(
-                        "{name} block {blocks_seen} line {n}: non-ASCII {c:?}.                          GitHub's parser can reject it; use plain ASCII"
-                    ));
-                }
-                if line.trim_start().starts_with("subgraph") {
-                    problems.push(format!(
-                        "{name} block {blocks_seen} line {n}: subgraph. A plain                          flowchart expresses the same thing and parses everywhere"
-                    ));
-                }
-                // A label is the text between [] or {}. If it is not wrapped in
-                // quotes, punctuation inside it can end the token early.
-                for (openc, closec) in [('[', ']'), ('{', '}')] {
-                    let mut hay = line;
-                    while let Some(i) = hay.find(openc) {
-                        let tail = &hay[i + 1..];
-                        let Some(j) = tail.find(closec) else { break };
-                        let label = &tail[..j];
-                        let quoted = label.starts_with('"') && label.ends_with('"');
-                        if !label.is_empty() && !quoted {
-                            problems.push(format!(
-                                "{name} block {blocks_seen} line {n}: unquoted label                                  `{label}`. Wrap every label in double quotes"
-                            ));
-                        }
-                        hay = &tail[j + 1..];
-                    }
-                }
-            }
-            rest = &after[close + 3..];
-        }
-    }
-
-    assert!(blocks_seen >= 5, "only found {blocks_seen} mermaid blocks; the extractor is broken");
-    assert!(problems.is_empty(), "{}", problems.join("\n  "));
-}
 
 /// Every diagram image referenced by a document must exist in the repository.
 ///
@@ -455,18 +354,25 @@ fn every_diagram_image_exists() {
 
     for (name, body) in docs {
         let mut rest = *body;
-        while let Some(i) = rest.find("src=\".github/assets/diagrams/") {
-            let after = &rest[i + 5..];
-            let Some(j) = after.find('"') else { break };
-            let path = &after[..j];
-            seen += 1;
-            if !root.join(path).is_file() {
-                missing.push(format!("{name}: {path}"));
+        for marker in ["src=\"", "srcset=\""] {
+            let mut hay = *body;
+            while let Some(i) = hay.find(marker) {
+                let after = &hay[i + marker.len()..];
+                let Some(j) = after.find('"') else { break };
+                let path = &after[..j];
+                if path.starts_with(".github/assets/diagrams/") {
+                    seen += 1;
+                    if !root.join(path).is_file() {
+                        missing.push(format!("{name}: {path}"));
+                    }
+                }
+                hay = &after[j..];
             }
-            rest = &after[j..];
         }
+        let _ = &mut rest;
     }
 
-    assert!(seen >= 5, "found only {seen} diagram images; the extractor is broken");
+    // Five diagrams, each with a light and a dark file.
+    assert!(seen >= 10, "found only {seen} diagram images; the extractor is broken");
     assert!(missing.is_empty(), "missing diagram image(s):\n  {}", missing.join("\n  "));
 }

@@ -11,28 +11,10 @@ daemon, no database, and no background process. Every verb runs in-process and e
 
 Two gates decide whether generated work counts:
 
-<p align="center">
-  <img src=".github/assets/diagrams/two-gates.svg" alt="Work passes a command gate, then an architecture grade, then commits." width="780">
-</p>
-
-<details>
-<summary>diagram source</summary>
-
-```mermaid
-flowchart LR
-    W["work<br/>scaffold, build, edit"] --> G1{"gate<br/>a command that<br/>must exit 0"}
-    G1 -->|"nonzero"| R["revert"]
-    G1 -->|"exit 0"| G2{"architecture grade<br/>boundary analysis<br/>over the AST"}
-    G2 -->|"below floor"| R
-    G2 -->|"meets floor"| C["commit"]
-
-    style G1 fill:#2d333b,stroke:#539bf5,color:#adbac7
-    style G2 fill:#2d333b,stroke:#986ee2,color:#adbac7
-    style C fill:#2d333b,stroke:#57ab5a,color:#adbac7
-    style R fill:#2d333b,stroke:#c69026,color:#adbac7
-```
-
-</details>
+| Gate | Asks | Fails when |
+|---|---|---|
+| the command | does it run? | your test command exits nonzero |
+| the grade | is it the shape you asked for? | boundary analysis falls below the floor |
 
 The first answers *does it run*. The second answers *is it the shape you asked
 for*. A test suite cannot reach that second question. A program whose use case
@@ -44,32 +26,11 @@ A single ReAct loop, in process. The differentiator is the quality of context
 assembled for one loop, not the number of loops.
 
 <p align="center">
-  <img src=".github/assets/diagrams/loop.svg" alt="The ReAct loop, ending in an edit the evidence command must accept." width="780">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/diagrams/loop-dark.svg">
+    <img src=".github/assets/diagrams/loop-light.svg" alt="The agent loop, ending in an edit the evidence command must accept." width="460">
+  </picture>
 </p>
-
-<details>
-<summary>diagram source</summary>
-
-```mermaid
-flowchart TB
-    IN["task, graph context,<br/>ranked lessons,<br/>windowed file"] --> A
-    A["compress transcript"] --> B["inference call<br/>with curated tools"]
-    B --> C["dispatch read and verify tools"]
-    C --> D["append observations"]
-    D --> A
-    D --> E["propose_edit, the terminal tool"]
-    E --> F["apply to the file"]
-    F --> G{"run the evidence command"}
-    G -->|"exit 0"| H["commit"]
-    G -->|"nonzero"| I["revert, return the<br/>failure to the agent"]
-    I --> A
-
-    style G fill:#2d333b,stroke:#539bf5,color:#adbac7
-    style H fill:#2d333b,stroke:#57ab5a,color:#adbac7
-    style I fill:#2d333b,stroke:#c69026,color:#adbac7
-```
-
-</details>
 
 - **Loop and tool protocol.** `hex-exec/src/direct_react.rs` holds the ReAct loop.
   `simple_agent.rs` holds native function-calling with a text-mode JSON fallback.
@@ -118,40 +79,11 @@ to *refuting*, so plausible-but-wrong findings die before any edit is made.
 Eight crates, one binary. The dependency direction is the architecture:
 
 <p align="center">
-  <img src=".github/assets/diagrams/crates.svg" alt="Crate dependency graph. Everything points at hex-core." width="780">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/diagrams/crates-dark.svg">
+    <img src=".github/assets/diagrams/crates-light.svg" alt="hex-cli depends on hex-exec, which depends on hex-infer, which depends on hex-core." width="460">
+  </picture>
 </p>
-
-<details>
-<summary>diagram source</summary>
-
-```mermaid
-flowchart TB
-    CLI["hex-cli<br/>the binary, and the<br/>only composition root"]
-    EXEC["hex-exec<br/>agent loop, harness,<br/>guarded tools, local store"]
-    INFER["hex-infer<br/>every inference adapter,<br/>tier resolution"]
-    ANAL["hex-analysis<br/>boundary checking,<br/>health detectors"]
-    GRAPH["hex-graph<br/>code knowledge graph"]
-    GIT["hex-git"]
-    PARSE["hex-parser"]
-    CORE["hex-core<br/>contract surface,<br/>zero runtime deps"]
-
-    CLI --> EXEC
-    CLI --> ANAL
-    CLI --> GRAPH
-    CLI --> GIT
-    EXEC --> INFER
-    EXEC --> GIT
-    INFER --> CORE
-    EXEC --> CORE
-    ANAL --> PARSE
-    GRAPH --> PARSE
-
-    style CORE fill:#2d333b,stroke:#57ab5a,color:#adbac7
-    style INFER fill:#2d333b,stroke:#986ee2,color:#adbac7
-    style CLI fill:#2d333b,stroke:#c69026,color:#adbac7
-```
-
-</details>
 
 | Crate | Role |
 |---|---|

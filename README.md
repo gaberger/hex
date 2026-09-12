@@ -36,27 +36,11 @@ fails. The suite is green. The next change is a little harder, and the one
 after that is harder still.
 
 <p align="center">
-  <img src=".github/assets/diagrams/drift.svg" alt="Generate, test, ship. Shape drifts with nothing checking it." width="780">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/diagrams/drift-dark.svg">
+    <img src=".github/assets/diagrams/drift-light.svg" alt="Agent writes code, tests pass, ship. Shape drifts with nothing checking it." width="460">
+  </picture>
 </p>
-
-<details>
-<summary>diagram source</summary>
-
-```mermaid
-flowchart LR
-    A["describe the feature"] --> B["agent writes code"]
-    B --> C{"tests pass?"}
-    C -->|"no"| B
-    C -->|"yes"| D["ship"]
-    D -.-> E["shape drifts, silently"]
-    E -.-> F["week 12, nothing is<br/>where it belongs"]
-
-    style C fill:#2d333b,stroke:#539bf5,color:#adbac7
-    style E fill:#2d333b,stroke:#c69026,color:#adbac7
-    style F fill:#2d333b,stroke:#e5534b,color:#adbac7
-```
-
-</details>
 
 A test suite answers *does it run*. Nothing in that loop answers *is it still the
 system I designed*.
@@ -73,31 +57,12 @@ Code drifts from a spec in silence, because nothing ever runs the spec. In a
 Not one raised an error, ever. A document that cannot fail is indistinguishable
 from a document that is wrong, and you cannot tell which one you are holding.
 
-<p align="center">
-  <img src=".github/assets/diagrams/spec-vs-gate.svg" alt="A spec cannot fail. A gate exits nonzero and reverts." width="780">
-</p>
-
-<details>
-<summary>diagram source</summary>
-
-```mermaid
-flowchart LR
-    S1["SPEC-DRIVEN<br/>spec is prose"] -.-> S2["code"]
-    S2 --> S3["tests pass"]
-    S1 -.-> S4["spec silently stops<br/>being true"]
-
-    G1["GATE-DRIVEN<br/>a command that<br/>must exit 0"] ==> G2["code"]
-    G2 ==> G3{"run the gate"}
-    G3 -->|"exit 0"| G4["commit"]
-    G3 -->|"nonzero"| G5["revert"]
-
-    style S4 fill:#2d333b,stroke:#e5534b,color:#adbac7
-    style G1 fill:#2d333b,stroke:#57ab5a,color:#adbac7
-    style G4 fill:#2d333b,stroke:#57ab5a,color:#adbac7
-    style G5 fill:#2d333b,stroke:#c69026,color:#adbac7
-```
-
-</details>
+| | spec-driven | gate-driven |
+|---|---|---|
+| The artifact | prose | a command |
+| Can it fail? | **no** | yes, with an exit code |
+| When code drifts | the spec silently stops being true | the gate goes red |
+| What decides done | a human reading two documents | the exit code |
 
 A gate is executable, so it fails the moment it stops being true. That is the whole
 difference, and it is why hex has no spec step.
@@ -109,33 +74,11 @@ difference, and it is why hex has no spec step.
 Two gates, because they answer different questions.
 
 <p align="center">
-  <img src=".github/assets/diagrams/pipeline.svg" alt="Floor, floor gate, build, gate, architecture grade, ship." width="780">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/diagrams/pipeline-dark.svg">
+    <img src=".github/assets/diagrams/pipeline-light.svg" alt="Floor, floor gate, build, gate, architecture grade, ship." width="460">
+  </picture>
 </p>
-
-<details>
-<summary>diagram source</summary>
-
-```mermaid
-flowchart TB
-    A["hex scaffold"] --> B["1. FLOOR<br/>deterministic skeleton from<br/>templates in the binary"]
-    B --> C{"floor gate<br/>does the skeleton run<br/>on this machine?"}
-    C -->|"no"| X["stop, before spending<br/>a model call"]
-    C -->|"yes"| D["2. BUILD<br/>N designs, each red-teamed,<br/>then built to the gate"]
-    D --> E{"gate<br/>does it run?"}
-    E -->|"no"| Y["fail"]
-    E -->|"yes"| F{"architecture grade<br/>is it the right shape?"}
-    F -->|"below floor"| Y
-    F -->|"A or better"| G["3. SHIP<br/>with rules that travel<br/>with the project"]
-
-    style C fill:#2d333b,stroke:#539bf5,color:#adbac7
-    style E fill:#2d333b,stroke:#539bf5,color:#adbac7
-    style F fill:#2d333b,stroke:#986ee2,color:#adbac7
-    style G fill:#2d333b,stroke:#57ab5a,color:#adbac7
-    style X fill:#2d333b,stroke:#c69026,color:#adbac7
-    style Y fill:#2d333b,stroke:#e5534b,color:#adbac7
-```
-
-</details>
 
 **The floor is not generated.** It comes from templates compiled into the binary.
 The output is byte-identical on every machine, every run. A scaffold you cannot reproduce is not a
@@ -159,37 +102,11 @@ Because it is the one architecture whose rules are *mechanically checkable*. "Go
 separation of concerns" cannot be graded. This can:
 
 <p align="center">
-  <img src=".github/assets/diagrams/hexagon.svg" alt="Adapters import ports. Ports import domain. Every arrow points inward." width="780">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/diagrams/hexagon-dark.svg">
+    <img src=".github/assets/diagrams/hexagon-light.svg" alt="Adapters import ports. Ports import domain. Only the composition root touches an adapter." width="460">
+  </picture>
 </p>
-
-<details>
-<summary>diagram source</summary>
-
-```mermaid
-flowchart TB
-    PA["adapters/primary<br/>HTTP, CLI, UI"]
-    SA["adapters/secondary<br/>database, files, APIs"]
-    U["usecases<br/>orchestration"]
-    P["ports<br/>interfaces"]
-    D["domain<br/>pure logic, imports nothing"]
-    CR["composition root<br/>the only file that may<br/>import an adapter"]
-
-    PA -->|"ports only"| P
-    SA -->|"ports only"| P
-    U --> P
-    P --> D
-    CR -.-> PA
-    CR -.-> SA
-
-    style D fill:#2d333b,stroke:#57ab5a,color:#adbac7
-    style P fill:#2d333b,stroke:#539bf5,color:#adbac7
-    style U fill:#2d333b,stroke:#539bf5,color:#adbac7
-    style PA fill:#2d333b,stroke:#986ee2,color:#adbac7
-    style SA fill:#2d333b,stroke:#986ee2,color:#adbac7
-    style CR fill:#2d333b,stroke:#c69026,color:#adbac7
-```
-
-</details>
 
 Every arrow points inward, and `hex analyze` walks the AST to check it. The rules are
 short enough to state and strict enough to fail:
