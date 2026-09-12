@@ -78,6 +78,8 @@ pub struct FileData {
     pub exports: Vec<ExportDeclaration>,
     /// Every identifier the file names, counted. See `AstPort::extract_references`.
     pub references: HashMap<String, usize>,
+    /// Method names per trait or interface the file declares. See `AstPort::extract_members`.
+    pub members: HashMap<String, Vec<String>>,
 }
 
 /// Find exports that no other file imports.
@@ -289,6 +291,7 @@ mod tests {
                 })
                 .collect(),
             references: HashMap::new(),
+            members: HashMap::new(),
         }
     }
 
@@ -420,6 +423,7 @@ mod tests {
                 kind: ExportKind::Value,
             }],
             references: HashMap::new(),
+            members: HashMap::new(),
         }];
         let dead = find_dead_exports(&files, &[]);
         assert!(dead.is_empty());
@@ -478,6 +482,7 @@ mod tests {
                 })
                 .collect(),
             references: HashMap::new(),
+            members: HashMap::new(),
         }
     }
 

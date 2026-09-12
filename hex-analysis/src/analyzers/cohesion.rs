@@ -27,7 +27,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser};
-use walkdir::WalkDir;
+
+const RUST_ONLY: &str = "no Rust files; detector is Rust-only";
 
 /// Method count above which a port is "fat" regardless of clustering.
 /// 8+ methods is almost always a kitchen-sink port.
@@ -70,6 +71,10 @@ pub struct CohesionFinding {
 /// Top-level envelope emitted by `--port-cohesion`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CohesionReport {
+    /// Set when the tree has source files but none in Rust. This detector
+    /// reads Rust only, and says so rather than reporting zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_applicable: Option<String>,
     pub findings: Vec<CohesionFinding>,
 }
 
@@ -82,22 +87,13 @@ pub fn analyze(root: &Path) -> anyhow::Result<CohesionReport> {
         .set_language(&lang)
         .map_err(|e| anyhow::anyhow!("set tree-sitter-rust language: {e}"))?;
 
-    let root_for_filter = root.to_path_buf();
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| e.path() == root_for_filter || !is_excluded_dir(e.path()))
-    {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|x| x.to_str()) != Some("rs") {
-            continue;
-        }
+    let all_files = crate::analyzer::source_files_sync(root);
+    let rust_files: Vec<&String> = all_files.iter().filter(|f| f.ends_with(".rs")).collect();
+    if rust_files.is_empty() && !all_files.is_empty() {
+        return Ok(CohesionReport { not_applicable: Some(RUST_ONLY.to_string()), ..Default::default() });
+    }
+    for rel_owned in rust_files {
+        let path = &root.join(rel_owned);
         let Ok(source) = std::fs::read_to_string(path) else {
             continue;
         };
@@ -121,21 +117,6 @@ pub fn analyze(root: &Path) -> anyhow::Result<CohesionReport> {
     Ok(report)
 }
 
-fn is_excluded_dir(p: &Path) -> bool {
-    let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
-    if matches!(
-        name,
-        "target" | "node_modules" | ".git" | "dist" | "build"
-    ) {
-        return true;
-    }
-    if name.starts_with("hex-worktrees") {
-        return true;
-    }
-    name.starts_with('.')
-}
 
 // ── Trait + method extraction ────────────────────────────────────────
 

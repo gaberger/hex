@@ -101,6 +101,68 @@ impl AstPort for TreeSitterAdapter {
         collect_references(&tree.root_node(), source, &mut out);
         Ok(out)
     }
+
+    fn extract_members(
+        &self,
+        _path: &Path,
+        source: &str,
+        lang: Language,
+    ) -> Result<std::collections::HashMap<String, Vec<String>>, AnalysisError> {
+        if lang == Language::Unknown {
+            return Ok(std::collections::HashMap::new());
+        }
+        let tree = parse_source(source, lang)?;
+        let mut out = std::collections::HashMap::new();
+        collect_members(&tree.root_node(), source, &mut out);
+        Ok(out)
+    }
+}
+
+/// Trait and interface method names, by trait name, in all three grammars:
+/// Rust `trait_item`, Go `type_spec` with an `interface_type`, TypeScript
+/// `interface_declaration`.
+fn collect_members(
+    node: &tree_sitter::Node,
+    source: &str,
+    out: &mut std::collections::HashMap<String, Vec<String>>,
+) {
+    let owner = match node.kind() {
+        "trait_item" | "interface_declaration" => node.child_by_field_name("name"),
+        "type_spec" => {
+            let is_interface = node
+                .child_by_field_name("type")
+                .map(|t| t.kind() == "interface_type")
+                .unwrap_or(false);
+            if is_interface { node.child_by_field_name("name") } else { None }
+        }
+        _ => None,
+    };
+    if let Some(name_node) = owner {
+        let mut methods = Vec::new();
+        collect_method_names(node, source, &mut methods);
+        out.insert(node_text(name_node, source), methods);
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_members(&child, source, out);
+    }
+}
+
+fn collect_method_names(node: &tree_sitter::Node, source: &str, out: &mut Vec<String>) {
+    if matches!(
+        node.kind(),
+        "function_signature_item" | "function_item" | "method_elem" | "method_spec" | "method_signature"
+    ) {
+        if let Some(n) = node.child_by_field_name("name") {
+            out.push(node_text(n, source));
+        }
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_method_names(&child, source, out);
+    }
 }
 
 /// Every identifier leaf in the tree, counted by text. Comments and string
@@ -125,8 +187,14 @@ fn collect_references(
         }
         return;
     }
+    // `mod foo;` declares a module; it does not name anything. Counting it
+    // would make every Rust layer read as referenced from `lib.rs`.
+    let skip_name = node.kind() == "mod_item";
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
+        if skip_name && node.child_by_field_name("name").map(|n| n.id()) == Some(child.id()) {
+            continue;
+        }
         collect_references(&child, source, out);
     }
 }
@@ -601,9 +669,12 @@ fn extract_go_exports(
             }
             "type_declaration" => {
                 // type Foo struct { ... } or type Bar interface { ... }
+                // `type Count = domain.Count` is a `type_alias`, not a
+                // `type_spec`; it is an exported type all the same, and the
+                // ports layer re-exports domain types exactly this way.
                 let mut tc = child.walk();
                 for spec in child.children(&mut tc) {
-                    if spec.kind() == "type_spec" {
+                    if spec.kind() == "type_spec" || spec.kind() == "type_alias" {
                         if let Some(name_node) = spec.child_by_field_name("name") {
                             let name = node_text(name_node, source);
                             if is_go_exported(&name) {

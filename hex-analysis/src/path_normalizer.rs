@@ -150,11 +150,19 @@ fn resolve_go_import(from_file: &str, import_path: &str, module_prefix: Option<&
 }
 
 fn resolve_rust_import(import_path: &str, from_file: &str) -> String {
-    // crate:: paths map to src/ directory structure
+    // crate:: paths map to the importing crate's src/ directory. In a
+    // workspace the importing file is `hex-core/src/domain/x.rs`, so its
+    // crate root is `hex-core/`; without that prefix a `crate::` target
+    // named a path in no crate and no Rust cycle inside a workspace member
+    // could ever close.
     if let Some(rest) = import_path.strip_prefix("crate::") {
         let segments: Vec<&str> = rest.split("::").collect();
         let stripped = strip_rust_item_name(&segments);
-        return format!("src/{}", stripped.join("/"));
+        let crate_root = match from_file.find("src/") {
+            Some(i) if i == 0 || from_file.as_bytes()[i - 1] == b'/' => &from_file[..i],
+            _ => "",
+        };
+        return format!("{}src/{}", crate_root, stripped.join("/"));
     }
 
     // self::foo — current module (resolve relative to importing file's directory)

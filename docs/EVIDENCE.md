@@ -85,6 +85,24 @@ the analyzer names the file and exits 1. This exists because an earlier build of
 the analyzer excluded `hex-core/` and `hex-cli/` by name, so hex graded itself
 over six of eight crates and reported A+.
 
+## Every detector reads all three languages, or says it does not
+
+```bash
+for lang in rust go ts; do
+  hex init /tmp/probe-$lang --scaffold --lang $lang
+  (cd /tmp/probe-$lang && hex analyze .)
+done
+```
+
+Expected, for each language: `Architecture grade: A+ — score 100/100`,
+`0 boundary violations`, `dead layers 0`, `orphans 0`. For Go and
+TypeScript, `cohesion`, `duplication` and `god types` print
+`n/a (no Rust files; detector is Rust-only)`; they never print a count for a
+tree they cannot read. A fresh scaffold has nothing dead, unused, orphaned or
+circular by construction, so any other number is a detector defect
+(ADR-2609120600). The per-language fixtures, wired and broken, are the files
+matching `hex-analysis/tests/*_per_language.rs`.
+
 ## A commit failure does not delete the work
 
 **Claim.** When the gate passes and `git commit` fails, the change is kept in

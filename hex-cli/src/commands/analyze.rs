@@ -434,36 +434,39 @@ enum Health {
 
 fn health_findings(root: &Path) -> Vec<(&'static str, Health)> {
     use hex_analysis::analyzers::*;
-    fn count<T>(r: anyhow::Result<T>, len: impl Fn(&T) -> usize) -> Health {
+    // Every display detector reports either a count, a reason it did not
+    // look, or the error that stopped it. A zero is only printed when the
+    // detector looked.
+    fn health<T>(
+        r: anyhow::Result<T>,
+        declined: impl Fn(&T) -> Option<String>,
+        len: impl Fn(&T) -> usize,
+    ) -> Health {
         match r {
-            Ok(v) => Health::Count(len(&v)),
+            Ok(v) => match declined(&v) {
+                Some(why) => Health::NotApplicable(why),
+                None => Health::Count(len(&v)),
+            },
             Err(e) => Health::Failed(e.to_string()),
         }
     }
     vec![
-        ("cohesion", count(cohesion::analyze(root), |r| r.findings.len())),
-        ("duplication", count(duplication::analyze(root), |r| r.findings.len())),
+        ("cohesion", health(cohesion::analyze(root), |r| r.not_applicable.clone(), |r| r.findings.len())),
+        ("duplication", health(duplication::analyze(root), |r| r.not_applicable.clone(), |r| r.findings.len())),
         (
             "god types",
-            count(
+            health(
                 god_types::analyze(root, god_types::GodTypeThresholds::from_project_root(root)),
+                |r| r.not_applicable.clone(),
                 |r| r.findings.len(),
             ),
         ),
-        (
-            "dead layers",
-            match dead_layer::analyze(root) {
-                Ok(r) => match r.not_applicable {
-                    Some(why) => Health::NotApplicable(why),
-                    None => Health::Count(r.findings.len()),
-                },
-                Err(e) => Health::Failed(e.to_string()),
-            },
-        ),
+        ("dead layers", health(dead_layer::analyze(root), |r| r.not_applicable.clone(), |r| r.findings.len())),
         (
             "orphans",
-            count(
+            health(
                 orphan::analyze(root, orphan::OrphanOptions { orphan_adapters: true, orphan_ports: true }),
+                |r| r.not_applicable.clone(),
                 |r| r.findings.len(),
             ),
         ),

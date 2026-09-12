@@ -1,25 +1,31 @@
 //! Dead-layer detector.
 //!
-//! "Walks the call graph from primary adapters and emits a finding for
-//! any layer dir with zero inbound edges." Concretely:
+//! A layer directory with no inbound import from outside it is dead.
+//! Concretely:
 //!
 //! 1. Discover every directory whose name (and parent, where relevant)
 //!    identifies it as a hex layer: `domain/`, `ports/`, `usecases/`,
 //!    `adapters/primary/`, `adapters/secondary/`.
-//! 2. For each `.rs` file in the workspace, parse `use_declaration`
-//!    nodes and classify which **layer kinds** they reference (by path
-//!    segment — `crate::ports::Foo` references `ports`,
-//!    `crate::adapters::secondary::Db` references `adapter_secondary`).
+//! 2. For each Rust, Go or TypeScript file in the tree, take its imports
+//!    from the shared tree-sitter adapter and classify which **layer
+//!    kinds** each import path names, by path segment: `crate::ports::Foo`,
+//!    `../ports/foo.js` and `demo/internal/ports` all name `ports`;
+//!    `crate::adapters::secondary::Db` names `adapter_secondary`.
 //! 3. For each layer dir `L` of kind `K`, count inbound = files OUTSIDE
 //!    `L` that reference `K`. Flag `L` when inbound is zero, except
 //!    when `K == adapter_primary` (primary adapters are entry points
 //!    and need no inbound caller — composition wires them).
 //!
-//! The detector is deliberately kind-keyed on the inbound side: matching
-//! on path-segment names handles re-exports and `pub use` chains that a
-//! pure file-graph pass would miss. The cost is some over-attribution
-//! across crates that share layer names — acceptable for a v1 health
-//! signal; per-crate scoping is a P2 refinement.
+//! The detector is kind-keyed on the inbound side: matching on path
+//! segments handles re-exports and `pub use` chains that a pure file-graph
+//! pass would miss. The cost is some over-attribution across crates that
+//! share layer names.
+//!
+//! This detector used to parse with the Rust grammar and read only `.rs`
+//! files, so on a TypeScript project it saw no inbound edge anywhere and
+//! reported every layer dead. It now reads imports through
+//! `TreeSitterAdapter::extract_imports`, the same extraction the boundary
+//! analysis uses, in all three languages (ADR-2609120600, step 3).
 //!
 //! ## Output schema
 //!
@@ -35,8 +41,10 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tree_sitter::{Node, Parser};
-use walkdir::WalkDir;
+
+use crate::domain::Language;
+use crate::ports::AstPort;
+use crate::treesitter_adapter::TreeSitterAdapter;
 
 /// Hex layer kinds the detector is aware of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -86,66 +94,70 @@ pub struct DeadLayerReport {
 ///
 /// Findings are sorted by `(layer, layer_kind)` so the improver's
 /// hypothesis IDs and integration-test assertions stay deterministic.
-fn tree_has_rust(root: &Path) -> bool {
-    WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| e.path() == root || !is_excluded_dir(e.path()))
-        .flatten()
-        .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("rs"))
-}
-
 pub fn analyze(root: &Path) -> anyhow::Result<DeadLayerReport> {
     let layers = discover_layers(root);
     if layers.is_empty() {
         return Ok(DeadLayerReport::default());
     }
 
-    // This detector parses with the Rust grammar and reads only `.rs` files.
-    // On a Go or TypeScript tree it sees no inbound edge anywhere and flags
-    // every layer as dead. That count was displayed next to the grade on a
-    // real TypeScript project, ten layers, and read as part of the verdict.
-    //
-    // Until it is rebuilt on the shared per-language file model
-    // (ADR-2609120600, step 3), it declines to report on a tree with no Rust
-    // in it. Declining is honest. Reporting ten dead layers is not.
-    if !tree_has_rust(root) {
-        return Ok(DeadLayerReport { not_applicable: Some("no .rs files; detector is Rust-only".to_string()), ..Default::default() });
-    }
+    let adapter = TreeSitterAdapter::new();
 
-    let mut parser = Parser::new();
-    let lang: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-    parser
-        .set_language(&lang)
-        .map_err(|e| anyhow::anyhow!("set tree-sitter-rust language: {e}"))?;
-
-    // Per-file: which layer kinds does this file reference via `use`?
+    // Per-file: which layer kinds does this file name in its imports?
     let mut file_refs: Vec<(PathBuf, BTreeSet<LayerKind>)> = Vec::new();
 
-    let root_for_filter = root.to_path_buf();
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| e.path() == root_for_filter || !is_excluded_dir(e.path()))
-    {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|x| x.to_str()) != Some("rs") {
+    for rel_owned in crate::analyzer::source_files_sync(root) {
+        let path = &root.join(&rel_owned);
+        let rel = path.strip_prefix(root).unwrap_or(path);
+        let lang = Language::from_path(&rel.to_string_lossy());
+        if lang == Language::Unknown {
             continue;
         }
         let Ok(source) = std::fs::read_to_string(path) else {
             continue;
         };
-        let Some(tree) = parser.parse(&source, None) else {
+        let Ok(imports) = adapter.extract_imports(rel, &source, lang) else {
             continue;
         };
         let mut refs = BTreeSet::new();
-        collect_use_refs(tree.root_node(), &source, &mut refs);
+        for imp in &imports {
+            // The Rust extractor records `mod foo;` as an import of
+            // `self::foo`. Declaring a module is not using it: `lib.rs`
+            // declares every layer, and counting that would make no layer
+            // ever dead in Rust.
+            if is_module_declaration(imp) {
+                continue;
+            }
+            classify_use_text(&imp.raw_path, &mut refs);
+        }
+        // A qualified path names a layer without importing it:
+        // `usecases::increment(..)` in Rust, `usecases.Increment(..)` in Go.
+        // The identifier counts from the shared adapter carry those.
+        if let Ok(names) = adapter.extract_references(rel, &source, lang) {
+            let has = |t: &str| names.contains_key(t);
+            if has("domain") {
+                refs.insert(LayerKind::Domain);
+            }
+            if has("ports") {
+                refs.insert(LayerKind::Ports);
+            }
+            if has("usecases") {
+                refs.insert(LayerKind::Usecases);
+            }
+            if has("adapters") && has("primary") {
+                refs.insert(LayerKind::AdapterPrimary);
+            }
+            if has("adapters") && has("secondary") {
+                refs.insert(LayerKind::AdapterSecondary);
+            }
+        }
         file_refs.push((path.to_path_buf(), refs));
+    }
+
+    if file_refs.is_empty() {
+        return Ok(DeadLayerReport {
+            not_applicable: Some("no Rust, Go or TypeScript files".to_string()),
+            ..Default::default()
+        });
     }
 
     let mut findings: Vec<DeadLayerFinding> = Vec::new();
@@ -189,20 +201,25 @@ struct LayerDir {
 }
 
 fn discover_layers(root: &Path) -> Vec<LayerDir> {
-    let mut layers = Vec::new();
-    let root_for_filter = root.to_path_buf();
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| e.path() == root_for_filter || !is_excluded_dir(e.path()))
-    {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
+    // Layer directories are the directories of graded files. Walking the
+    // tree on its own found `examples/*/src/usecases` and the scaffold
+    // templates, none of which the inbound side reads, and reported them
+    // all dead: 24 on hex's own tree.
+    let mut rels: BTreeSet<String> = BTreeSet::new();
+    for file in crate::analyzer::source_files_sync(root) {
+        let mut dir = Path::new(&file).parent();
+        while let Some(d) = dir {
+            let rel = d.to_string_lossy().replace('\\', "/");
+            if rel.is_empty() {
+                break;
+            }
+            rels.insert(rel);
+            dir = d.parent();
         }
+    }
+    let mut layers = Vec::new();
+    for rel in rels {
+        let path = Path::new(&rel);
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
@@ -210,25 +227,12 @@ fn discover_layers(root: &Path) -> Vec<LayerDir> {
             "domain" => Some(LayerKind::Domain),
             "ports" => Some(LayerKind::Ports),
             "usecases" => Some(LayerKind::Usecases),
-            "primary" if parent_basename(path) == Some("adapters") => {
-                Some(LayerKind::AdapterPrimary)
-            }
-            "secondary" if parent_basename(path) == Some("adapters") => {
-                Some(LayerKind::AdapterSecondary)
-            }
+            "primary" if parent_basename(path) == Some("adapters") => Some(LayerKind::AdapterPrimary),
+            "secondary" if parent_basename(path) == Some("adapters") => Some(LayerKind::AdapterSecondary),
             _ => None,
         };
         if let Some(k) = kind {
-            let rel = path
-                .strip_prefix(root)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
-            layers.push(LayerDir {
-                path: path.to_path_buf(),
-                rel,
-                kind: k,
-            });
+            layers.push(LayerDir { path: root.join(&rel), rel, kind: k });
         }
     }
     // Stable order so the per-layer scan is deterministic even before
@@ -237,28 +241,24 @@ fn discover_layers(root: &Path) -> Vec<LayerDir> {
     layers
 }
 
+/// `mod foo;` as the Rust extractor records it: `self::foo` with the one
+/// name `foo`. A `use self::foo;` looks the same and is rare enough to
+/// accept.
+fn is_module_declaration(imp: &crate::domain::ImportStatement) -> bool {
+    imp.names.len() == 1
+        && imp.raw_path.matches("::").count() == 1
+        && imp.raw_path == format!("self::{}", imp.names[0])
+}
+
 fn parent_basename(p: &Path) -> Option<&str> {
     p.parent()
         .and_then(|q| q.file_name())
         .and_then(|n| n.to_str())
 }
 
-fn collect_use_refs(node: Node, source: &str, out: &mut BTreeSet<LayerKind>) {
-    if node.kind() == "use_declaration" {
-        let text = node_text(node, source);
-        classify_use_text(text, out);
-        // Don't recurse into the use decl — we already harvested it.
-        return;
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_use_refs(child, source, out);
-    }
-}
-
-/// Tokenize a `use ...;` statement on non-identifier characters and
-/// look for layer-name segments. Handles single-path uses, grouped
-/// uses (`use crate::{ports::Foo, domain::Bar};`), and `pub use`.
+/// Tokenize an import path on non-identifier characters and look for
+/// layer-name segments. Works on `crate::ports::Foo`, `../ports/foo.js`
+/// and `demo/internal/ports` alike, and on a whole `use` statement.
 fn classify_use_text(text: &str, out: &mut BTreeSet<LayerKind>) {
     let tokens: Vec<&str> = text
         .split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -287,22 +287,6 @@ fn classify_use_text(text: &str, out: &mut BTreeSet<LayerKind>) {
     }
 }
 
-fn node_text<'a>(node: Node, source: &'a str) -> &'a str {
-    node.utf8_text(source.as_bytes()).unwrap_or("")
-}
-
-fn is_excluded_dir(p: &Path) -> bool {
-    let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
-    if matches!(name, "target" | "node_modules" | ".git" | "dist" | "build") {
-        return true;
-    }
-    if name.starts_with("hex-worktrees") {
-        return true;
-    }
-    name.starts_with('.')
-}
 
 #[cfg(test)]
 mod tests {

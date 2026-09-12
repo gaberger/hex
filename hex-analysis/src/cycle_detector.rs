@@ -14,13 +14,16 @@ use super::domain::ImportEdge;
 /// Returns each cycle as a vector of file paths forming the loop.
 /// A cycle `[A, B, C]` means `A → B → C → A`.
 pub fn detect_cycles(edges: &[ImportEdge]) -> Vec<Vec<String>> {
-    // Build adjacency list
+    // Nodes are modules, keyed per language (see `module_key`). Self-edges
+    // are intra-module reuse, not cycles.
+    let keyed: Vec<(String, String)> = edges
+        .iter()
+        .map(|e| (module_key(&e.from_file), module_key(&e.to_file)))
+        .filter(|(a, b)| a != b)
+        .collect();
     let mut graph: HashMap<&str, HashSet<&str>> = HashMap::new();
-    for edge in edges {
-        graph
-            .entry(edge.from_file.as_str())
-            .or_default()
-            .insert(edge.to_file.as_str());
+    for (from, to) in &keyed {
+        graph.entry(from.as_str()).or_default().insert(to.as_str());
     }
 
     let mut cycles = Vec::new();
@@ -110,11 +113,11 @@ mod tests {
     }
 
     #[test]
-    fn self_cycle() {
-        let edges = vec![edge("a.rs", "a.rs")];
-        let cycles = detect_cycles(&edges);
-        assert_eq!(cycles.len(), 1);
-        assert_eq!(cycles[0], vec!["a.rs"]);
+    fn a_self_edge_is_not_a_cycle() {
+        // A module naming itself is intra-module reuse: `mod.rs` and its
+        // submodules in Rust, a package's files in Go.
+        let edges = vec![edge("src/a.ts", "src/a.ts")];
+        assert!(detect_cycles(&edges).is_empty());
     }
 
     #[test]
@@ -132,5 +135,66 @@ mod tests {
     #[test]
     fn empty_graph() {
         assert!(detect_cycles(&[]).is_empty());
+    }
+}
+
+/// The graph node a path belongs to.
+///
+/// TypeScript imports name files, so a file is the node and a cycle is
+/// `a.ts → b.ts → a.ts`. A Go import names a package directory and a Rust
+/// `use` names a module path, neither of which is a file name, so file
+/// nodes never closed a loop in either language and the detector was
+/// TypeScript-only in effect (ADR-2609120600, step 4). Go nodes are
+/// package directories. Rust nodes are the module directly under `src/`
+/// (`src/domain`, `hex-core/src/ports`), which is where an architectural
+/// cycle lives; `mod.rs` and its submodules importing each other is how
+/// Rust modules are built and is not one.
+fn module_key(path: &str) -> String {
+    if path.ends_with(".go") {
+        return match path.rfind('/') {
+            Some(i) => path[..i].to_string(),
+            None => String::new(),
+        };
+    }
+    let is_rust = path.ends_with(".rs") || path.starts_with("crate/") || path.contains("/src/") || path.starts_with("src/");
+    if is_rust && !path.ends_with(".ts") && !path.ends_with(".tsx") {
+        let segs: Vec<&str> = path.split('/').collect();
+        if let Some(i) = segs.iter().position(|s| *s == "src") {
+            if i + 1 < segs.len() {
+                return segs[..i + 2].join("/").trim_end_matches(".rs").to_string();
+            }
+        }
+        if path.ends_with(".rs") {
+            return match path.rfind('/') {
+                Some(i) => path[..i].to_string(),
+                None => path.trim_end_matches(".rs").to_string(),
+            };
+        }
+    }
+    path.to_string()
+}
+
+#[cfg(test)]
+mod module_key_tests {
+    use super::module_key;
+
+    #[test]
+    fn go_nodes_are_package_directories() {
+        assert_eq!(module_key("internal/domain/count.go"), "internal/domain");
+        assert_eq!(module_key("internal/usecases"), "internal/usecases");
+    }
+
+    #[test]
+    fn rust_nodes_are_the_module_under_src() {
+        assert_eq!(module_key("src/domain/mod.rs"), "src/domain");
+        assert_eq!(module_key("src/usecases/increment"), "src/usecases");
+        assert_eq!(module_key("src/domain/count/value.rs"), "src/domain");
+        assert_eq!(module_key("hex-core/src/ports/inference.rs"), "hex-core/src/ports");
+        assert_eq!(module_key("src/lib.rs"), "src/lib");
+    }
+
+    #[test]
+    fn typescript_nodes_are_files() {
+        assert_eq!(module_key("src/core/domain/count.ts"), "src/core/domain/count.ts");
     }
 }

@@ -1,6 +1,6 @@
 # ADR-2609120600: Every detector supports every scaffold language, with a fixture per language
 
-**Status:** Proposed
+**Status:** Accepted (all five steps landed 2026-09-12)
 **Date:** 2026-09-12
 **Epoch:** solo
 **Drivers:** Operator directive: "we need to support 3 languages" and "make sure we have full testing." Backed by an audit taken during the refactoring trial (`docs/analysis/2609120500-refactoring-trial.md`).
@@ -12,14 +12,16 @@
 README says so. The architecture grade is the second gate, and it is computed
 by detectors in `hex-analysis`.
 
-An audit of those detectors on 2026-09-12:
+An audit of those detectors on 2026-09-12, before any step landed. Two cells
+were later found to be wrong in the optimistic direction; the Record below
+says which.
 
 | Detector | Feeds the score | Rust | Go | TypeScript |
 |---|---|---|---|---|
 | boundary analysis (tree-sitter) | yes | yes | yes | yes |
 | `dead_exports` | yes | **no**: every `.rs` file skipped | **no**: 7 false findings on a fresh scaffold | reads TS exports; correctness unverified |
 | `unused_ports` | yes | yes | structural | name-match only; missed the idiomatic value-export pattern |
-| `circular_deps` | yes | yes | mentioned | not mentioned |
+| `circular_deps` | yes | **no** in effect: file-path nodes never closed a loop | **no**: same | yes |
 | `dead_layer` | display | yes | **no** | **no**: parses with the Rust grammar and skips every non-`.rs` file |
 | `cohesion` | display | yes | no | no |
 | `duplication` | display | yes | no | no |
@@ -126,6 +128,58 @@ called: about 2,000 lines, including five `hex-git` modules (`blame`,
 `hex-analysis`, none of which any code called. After the cleanup hex grades
 A+ 100 over 277 scanned files with every score component at zero, and this
 time the number includes Rust.
+
+**Step 3, `dead_layer` (2026-09-12).** Rebuilt on the shared adapter's
+`extract_imports` plus its identifier counts, so `../ports/foo.js`,
+`demo/internal/ports` and `crate::ports::Foo` all name `ports`, and a
+qualified path with no import (`usecases::increment(..)`,
+`usecases.Increment(..)`) counts too. A `mod foo;` declaration does not: the
+Rust extractor records it as an import, and counting it made no Rust layer
+ever dead. Layer directories now come from the graded file list, not a
+second walk of the tree; the second walk found 24 layers under `examples/`
+and the scaffold templates that the inbound side never read. The
+`not_applicable` guard from step 1 is gone because the detector reads all
+three languages. Six fixtures in `hex-analysis/tests/dead_layer_per_language.rs`.
+
+**Step 4, `circular_deps` (2026-09-12).** The detector was TypeScript-only
+in effect. Its nodes were file paths; a Go import resolves to a package
+directory and a Rust `use` to a module path, so no Go or Rust edge ever
+closed a loop. Nodes are now modules per language: files in TypeScript,
+package directories in Go, the module under `src/` in Rust. A self-edge is
+intra-module reuse, not a cycle. The Rust resolver keeps the crate root on
+`crate::` targets (`hex-core/src/domain`, not `src/domain`), without which
+nothing inside a workspace member could close either. Six fixtures in
+`hex-analysis/tests/circular_deps_per_language.rs`; the broken case makes
+`domain` import `usecases`.
+
+**Step 5, the display detectors (2026-09-12).** All four walked the tree on
+their own and none excluded `examples/`, so hex's own display line said
+136 orphans and 152 duplications, every one of them in an example project.
+They now read `analyzer::source_files_sync`, the graded file list with the
+same exclusions as the grade. `orphan` is rebuilt on exports, identifier
+counts and trait member lists (`AstPort::extract_members`) and holds in all
+three languages: an orphan port is a ports type no adapter file names or
+implements by method set (Go implements structurally); an orphan adapter is
+a type in an adapters file that names a port when nothing outside adapters
+names anything the file exports but its methods. The old detector decided
+"wired" by a list of composition-root file names that did not include
+`lib.rs`, so every fresh Rust scaffold reported one orphan adapter. Six
+fixtures in `hex-analysis/tests/orphan_per_language.rs`. `cohesion`,
+`duplication` and `god_types` still read Rust only and now say so: on a
+tree with source files and no `.rs`, each returns `not_applicable` and the
+CLI prints `n/a` with the reason, held by
+`hex-analysis/tests/rust_only_detectors_declare_language.rs`. `duplication`
+also stops treating `Default`, `Display` and `TryFrom` as ports; only traits
+declared in the tree are.
+
+**State after step 5.** The three fresh scaffolds report zero findings from
+every detector that reads their language, and `n/a` from the three that do
+not. hex's own tree: A+ 100 over 277 files, every score component zero,
+`dead layers` 0, `orphans` 0, `duplication` 13 (the `Tool` implementations
+in `hex-exec/src/tools`, which do share shape). Rebuilding `cohesion`,
+`duplication` and `god_types` for Go and TypeScript is not planned; each
+would need a per-language reading of classes and method sets, and the
+declared `n/a` is the honest state of a display-only number.
 
 ## Consequences
 

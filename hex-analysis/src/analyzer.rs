@@ -21,6 +21,7 @@ use super::frontend_checker;
 use super::layer_classifier::classify_layer;
 use super::path_normalizer::{normalize_path, normalize_path_in, resolve_import_path};
 use super::ports::{AnalysisError, AstPort, ArchAnalysisPort};
+use super::treesitter_adapter::TreeSitterAdapter;
 
 /// Source file glob patterns for supported languages.
 const SOURCE_EXTENSIONS: &[&str] = &["ts", "tsx", "go", "rs"];
@@ -106,6 +107,70 @@ async fn detect_go_module_prefix(root: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// The files `hex analyze` grades, listed synchronously for the display
+/// detectors. Same rules as the async walk: `EXCLUDE_PATTERNS`, the
+/// project's `analyze.exclude`, test files out. Paths are project-relative
+/// with `/` separators, sorted.
+///
+/// This exists so every detector scans the same tree. Before it, each
+/// display detector walked on its own and none excluded `examples/`, so
+/// hex's own display line counted 136 orphans and 152 duplications that
+/// were all in example projects.
+pub fn source_files_sync(root: &Path) -> Vec<String> {
+    let project_ex_owned = project_excludes(root);
+    let project_ex: Vec<&str> = project_ex_owned.iter().map(String::as_str).collect();
+    let mut files = Vec::new();
+    let walker = walkdir::WalkDir::new(root).into_iter().filter_entry(|e| {
+        if e.path() == root {
+            return true;
+        }
+        let rel = e
+            .path()
+            .strip_prefix(root)
+            .unwrap_or(e.path())
+            .to_string_lossy()
+            .replace('\\', "/");
+        let hidden = e.file_name().to_string_lossy().starts_with('.');
+        !hidden
+            && !matches_exclude(&rel, EXCLUDE_PATTERNS)
+            && !matches_exclude(&rel, &project_ex)
+    });
+    for entry in walker.flatten() {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let rel = entry
+            .path()
+            .strip_prefix(root)
+            .unwrap_or(entry.path())
+            .to_string_lossy()
+            .replace('\\', "/");
+        if is_source_file(&rel) {
+            files.push(rel);
+        }
+    }
+    files.sort();
+    files
+}
+
+/// Exports and identifier counts for every graded file, synchronously.
+/// Imports are left empty; the display detectors do not read them.
+pub fn load_file_data_sync(root: &Path) -> Vec<FileData> {
+    let adapter = TreeSitterAdapter::new();
+    let mut out = Vec::new();
+    for rel in source_files_sync(root) {
+        let Ok(source) = std::fs::read_to_string(root.join(&rel)) else {
+            continue;
+        };
+        let lang = Language::from_path(&rel);
+        let exports = adapter.extract_exports(Path::new(&rel), &source, lang).unwrap_or_default();
+        let references = adapter.extract_references(Path::new(&rel), &source, lang).unwrap_or_default();
+        let members = adapter.extract_members(Path::new(&rel), &source, lang).unwrap_or_default();
+        out.push(FileData { path: normalize_path(&rel), imports: vec![], exports, references, members });
+    }
+    out
 }
 
 /// Recursively collect source files under a directory.
@@ -234,6 +299,10 @@ impl ArchAnalyzer {
                 });
             }
 
+            let members = self
+                .ast
+                .extract_members(Path::new(rel_path), &source, lang)
+                .unwrap_or_default();
             all_file_data.push(FileData {
                 path: from_file,
                 imports: imports
@@ -249,6 +318,7 @@ impl ArchAnalyzer {
                     .collect(),
                 exports,
                 references,
+                members,
             });
         }
 
@@ -295,6 +365,7 @@ impl ArchAnalyzer {
                     .collect(),
                 exports: vec![],
                 references,
+                members: HashMap::new(),
             });
         }
 

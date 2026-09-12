@@ -39,7 +39,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser};
-use walkdir::WalkDir;
+
+const RUST_ONLY: &str = "no Rust files; detector is Rust-only";
 
 /// Pairs at or above this multiset-Jaccard score are flagged as
 /// duplicate adapter implementations of the same port.
@@ -66,6 +67,10 @@ pub struct DuplicationFinding {
 /// Top-level envelope emitted by `--adapter-duplication`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct DuplicationReport {
+    /// Set when the tree has source files but none in Rust. This detector
+    /// reads Rust only, and says so rather than reporting zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_applicable: Option<String>,
     pub findings: Vec<DuplicationFinding>,
 }
 
@@ -89,22 +94,13 @@ fn analyze_with_threshold(
 
     let mut impls: Vec<ImplBlock> = Vec::new();
 
-    let root_for_filter = root.to_path_buf();
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| e.path() == root_for_filter || !is_excluded_dir(e.path()))
-    {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|x| x.to_str()) != Some("rs") {
-            continue;
-        }
+    let all_files = crate::analyzer::source_files_sync(root);
+    let rust_files: Vec<&String> = all_files.iter().filter(|f| f.ends_with(".rs")).collect();
+    if rust_files.is_empty() && !all_files.is_empty() {
+        return Ok(DuplicationReport { not_applicable: Some(RUST_ONLY.to_string()), ..Default::default() });
+    }
+    for rel_owned in rust_files {
+        let path = &root.join(rel_owned);
         let Ok(source) = std::fs::read_to_string(path) else {
             continue;
         };
@@ -118,6 +114,12 @@ fn analyze_with_threshold(
         };
         collect_impl_blocks(tree.root_node(), &source, &rel, &mut impls);
     }
+
+    // Only traits declared in the tree are ports. `impl Default for X` in
+    // two unrelated files is not two adapters of one port; it was most of
+    // hex's own duplication count.
+    let declared: std::collections::HashSet<String> = declared_traits(root);
+    impls.retain(|b| declared.contains(&b.port));
 
     // Group by port name; only same-port pairs are candidates for
     // "two adapters doing the same thing behind one contract".
@@ -177,7 +179,7 @@ fn analyze_with_threshold(
             .then(a.adapter_b.cmp(&b.adapter_b))
     });
 
-    Ok(DuplicationReport { findings })
+    Ok(DuplicationReport { findings, not_applicable: None })
 }
 
 // ── Internals ────────────────────────────────────────────────────────
@@ -310,18 +312,6 @@ fn last_path_segment(s: &str) -> String {
         .to_string()
 }
 
-fn is_excluded_dir(p: &Path) -> bool {
-    let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
-    if matches!(name, "target" | "node_modules" | ".git" | "dist" | "build") {
-        return true;
-    }
-    if name.starts_with("hex-worktrees") {
-        return true;
-    }
-    name.starts_with('.')
-}
 
 #[cfg(test)]
 mod tests {
@@ -379,5 +369,33 @@ mod tests {
         assert_eq!(round_4(0.123456789), 0.1235);
         assert_eq!(round_4(1.0), 1.0);
         assert_eq!(round_4(0.0), 0.0);
+    }
+}
+
+/// Names of every `trait` declared in the tree's Rust files.
+fn declared_traits(root: &Path) -> std::collections::HashSet<String> {
+    let mut parser = Parser::new();
+    let lang: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+    let mut out = std::collections::HashSet::new();
+    if parser.set_language(&lang).is_err() {
+        return out;
+    }
+    for rel in crate::analyzer::source_files_sync(root).iter().filter(|f| f.ends_with(".rs")) {
+        let Ok(source) = std::fs::read_to_string(root.join(rel)) else { continue };
+        let Some(tree) = parser.parse(&source, None) else { continue };
+        collect_trait_names(tree.root_node(), &source, &mut out);
+    }
+    out
+}
+
+fn collect_trait_names(node: tree_sitter::Node, source: &str, out: &mut std::collections::HashSet<String>) {
+    if node.kind() == "trait_item" {
+        if let Some(n) = node.child_by_field_name("name") {
+            out.insert(n.utf8_text(source.as_bytes()).unwrap_or("").to_string());
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_trait_names(child, source, out);
     }
 }

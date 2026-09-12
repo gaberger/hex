@@ -35,7 +35,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser};
-use walkdir::WalkDir;
+
+const RUST_ONLY: &str = "no Rust files; detector is Rust-only";
 
 /// Default LOC ceiling — a `domain/` type whose declaration plus impls
 /// span more than this in one file is presumed a god class.
@@ -63,6 +64,10 @@ pub struct GodTypeFinding {
 /// Top-level envelope emitted by `--god-types`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct GodTypeReport {
+    /// Set when the tree has source files but none in Rust. This detector
+    /// reads Rust only, and says so rather than reporting zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_applicable: Option<String>,
     pub findings: Vec<GodTypeFinding>,
 }
 
@@ -126,22 +131,13 @@ pub fn analyze(root: &Path, thresholds: GodTypeThresholds) -> anyhow::Result<God
 
     let mut findings: Vec<GodTypeFinding> = Vec::new();
 
-    let root_for_filter = root.to_path_buf();
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| e.path() == root_for_filter || !is_excluded_dir(e.path()))
-    {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|x| x.to_str()) != Some("rs") {
-            continue;
-        }
+    let all_files = crate::analyzer::source_files_sync(root);
+    let rust_files: Vec<&String> = all_files.iter().filter(|f| f.ends_with(".rs")).collect();
+    if rust_files.is_empty() && !all_files.is_empty() {
+        return Ok(GodTypeReport { not_applicable: Some(RUST_ONLY.to_string()), ..Default::default() });
+    }
+    for rel_owned in rust_files {
+        let path = &root.join(rel_owned);
         let rel = path.strip_prefix(root).unwrap_or(path);
         if !is_in_domain_tree(rel) {
             continue;
@@ -157,7 +153,7 @@ pub fn analyze(root: &Path, thresholds: GodTypeThresholds) -> anyhow::Result<God
     }
 
     findings.sort_by(|a, b| a.file.cmp(&b.file).then(a.type_name.cmp(&b.type_name)));
-    Ok(GodTypeReport { findings })
+    Ok(GodTypeReport { findings, not_applicable: None })
 }
 
 // ── Per-file accumulation ────────────────────────────────────────────
@@ -316,18 +312,6 @@ fn is_in_domain_tree(rel_path: &Path) -> bool {
     rel_path.components().any(|c| c.as_os_str() == "domain")
 }
 
-fn is_excluded_dir(p: &Path) -> bool {
-    let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
-    if matches!(name, "target" | "node_modules" | ".git" | "dist" | "build") {
-        return true;
-    }
-    if name.starts_with("hex-worktrees") {
-        return true;
-    }
-    name.starts_with('.')
-}
 
 #[cfg(test)]
 mod tests {

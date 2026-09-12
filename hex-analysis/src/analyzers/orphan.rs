@@ -1,22 +1,30 @@
 //! Orphan-adapter and orphan-port detectors.
 //!
-//! - **Orphan port**: a `trait` declared somewhere in the workspace with
-//!   *zero* `impl Trait for Type` blocks anywhere — the contract has no
-//!   adapter behind it.
-//! - **Orphan adapter**: a type that has an `impl Trait for Type` block
-//!   but is not referenced in any composition-root file — wiring is
-//!   missing, the adapter is dead.
+//! - **Orphan port**: a type exported from a `ports/` file that no adapter
+//!   file names. The contract has no adapter behind it.
+//! - **Orphan adapter**: a type exported from an `adapters/` file that names
+//!   a port, when nothing outside `adapters/` names anything the file
+//!   exports. The adapter exists and nothing wires it.
 //!
-//! Both walks rely on tree-sitter-rust to find `impl_item` and
-//! `trait_item` nodes, then resolve type/trait identifiers to their last
-//! path segment so `crate::ports::FooPort` and `FooPort` collide.
+//! Both read the shared per-file model (`exports` and identifier counts from
+//! the tree-sitter adapter), so they hold for Rust, Go and TypeScript alike.
+//! `impl FooPort for Echo`, `class Echo implements FooPort` and
+//! `func (e Echo) Load() ports.Count` all name the port. `lib.rs`,
+//! `composition-root.ts` and `composition-root.go` all name the adapter.
+//!
+//! The detector used to parse `impl` blocks with the Rust grammar and to
+//! decide "wired" by a list of composition-root file names that did not
+//! include `lib.rs`, so every fresh Rust scaffold reported one orphan
+//! adapter. It also walked `examples/`. (ADR-2609120600, step 5.)
 
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeSet, HashSet};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tree_sitter::{Node, Parser};
-use walkdir::WalkDir;
+
+use crate::analyzer::load_file_data_sync;
+use crate::dead_export_finder::FileData;
+use crate::domain::ExportKind;
 
 /// One finding row in the analyzer's JSON envelope.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,6 +41,10 @@ pub struct OrphanFinding {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct OrphanReport {
     pub findings: Vec<OrphanFinding>,
+    /// Set when the detector could not evaluate the tree at all. Never set
+    /// by this detector today; kept so every report reads the same way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_applicable: Option<String>,
 }
 
 /// Which detector(s) to run.
@@ -42,284 +54,219 @@ pub struct OrphanOptions {
     pub orphan_ports: bool,
 }
 
+fn is_ports_file(p: &str) -> bool {
+    p.contains("/ports/") || p.starts_with("ports/")
+}
+
+fn is_adapters_file(p: &str) -> bool {
+    p.contains("/adapters/") || p.starts_with("adapters/")
+}
+
 /// Run the configured orphan detectors over `root` (a workspace directory).
 ///
 /// Returns a deterministically ordered report (sorted by file then line)
 /// so test assertions and the improver's hypothesis IDs are stable.
 pub fn analyze(root: &Path, opts: OrphanOptions) -> anyhow::Result<OrphanReport> {
-    let scan = scan_workspace(root)?;
+    let files = load_file_data_sync(root);
+    Ok(analyze_files(&files, opts))
+}
+
+/// The detector proper, on already-loaded file data.
+fn analyze_files(files: &[FileData], opts: OrphanOptions) -> OrphanReport {
     let mut report = OrphanReport::default();
 
+    // Port types: Type exports of ports files.
+    let port_names: BTreeSet<&str> = files
+        .iter()
+        .filter(|f| is_ports_file(&f.path))
+        .flat_map(|f| f.exports.iter())
+        .filter(|e| e.kind == ExportKind::Type)
+        .map(|e| e.name.as_str())
+        .collect();
+
+    // What adapter files name, and what non-adapter files name.
+    let mut named_by_adapters: HashSet<&str> = HashSet::new();
+    let mut named_outside_adapters: HashSet<&str> = HashSet::new();
+    for f in files {
+        let into = if is_adapters_file(&f.path) { &mut named_by_adapters } else { &mut named_outside_adapters };
+        for name in f.references.keys() {
+            into.insert(name.as_str());
+        }
+    }
+
+    // Method sets exported per adapter file. A Go type implements an
+    // interface by having its methods and never names it.
+    let adapter_method_sets: Vec<HashSet<&str>> = files
+        .iter()
+        .filter(|f| is_adapters_file(&f.path))
+        .map(|f| f.exports.iter().filter(|e| e.kind == ExportKind::Method).map(|e| e.name.as_str()).collect())
+        .collect();
+    let implemented_structurally = |f: &FileData, port: &str| -> bool {
+        match f.members.get(port) {
+            Some(methods) if !methods.is_empty() => adapter_method_sets
+                .iter()
+                .any(|set| methods.iter().all(|m| set.contains(m.as_str()))),
+            _ => false,
+        }
+    };
+
     if opts.orphan_ports {
-        let impl_ports: HashSet<&str> =
-            scan.impls.iter().map(|i| i.port.as_str()).collect();
-        for t in &scan.traits {
-            if !impl_ports.contains(t.name.as_str()) {
-                report.findings.push(OrphanFinding {
-                    kind: "orphan_port".to_string(),
-                    port: t.name.clone(),
-                    adapter: None,
-                    file: t.file.clone(),
-                    line: t.line,
-                });
+        for f in files.iter().filter(|f| is_ports_file(&f.path)) {
+            for e in f.exports.iter().filter(|e| e.kind == ExportKind::Type) {
+                if !named_by_adapters.contains(e.name.as_str()) && !implemented_structurally(f, &e.name) {
+                    report.findings.push(OrphanFinding {
+                        kind: "orphan_port".to_string(),
+                        port: e.name.clone(),
+                        adapter: None,
+                        file: f.path.clone(),
+                        line: e.line,
+                    });
+                }
             }
         }
     }
 
     if opts.orphan_adapters {
-        let bound: HashSet<&str> = scan.composition_idents.iter().map(String::as_str).collect();
-        // Deduplicate (port, adapter) pairs — an adapter impl'd in one
-        // file should produce one finding even if scanned twice.
-        let mut seen: HashSet<(String, String)> = HashSet::new();
-        for i in &scan.impls {
-            if bound.contains(i.adapter.as_str()) {
+        for f in files.iter().filter(|f| is_adapters_file(&f.path)) {
+            // A file that names no port and implements none is not an
+            // adapter, whatever it exports. A Go file implements a port by
+            // exporting its whole method set.
+            let own_methods: HashSet<&str> =
+                f.exports.iter().filter(|e| e.kind == ExportKind::Method).map(|e| e.name.as_str()).collect();
+            let implements = |port: &str| -> bool {
+                files.iter().filter(|pf| is_ports_file(&pf.path)).any(|pf| {
+                    pf.members
+                        .get(port)
+                        .map(|ms| !ms.is_empty() && ms.iter().all(|m| own_methods.contains(m.as_str())))
+                        .unwrap_or(false)
+                })
+            };
+            let ports_named: Vec<&str> = port_names
+                .iter()
+                .copied()
+                .filter(|p| f.references.contains_key(*p) || implements(p))
+                .collect();
+            if ports_named.is_empty() {
                 continue;
             }
-            let key = (i.port.clone(), i.adapter.clone());
-            if !seen.insert(key) {
+            // Wired when anything the file exports is named outside adapters:
+            // the type itself, or a constructor like `NewMemoryStore`. Not a
+            // method: `Load` is named by every caller of every store.
+            let wired = f
+                .exports
+                .iter()
+                .filter(|e| e.kind != ExportKind::Method)
+                .any(|e| named_outside_adapters.contains(e.name.as_str()));
+            if wired {
                 continue;
             }
-            report.findings.push(OrphanFinding {
-                kind: "orphan_adapter".to_string(),
-                port: i.port.clone(),
-                adapter: Some(i.adapter.clone()),
-                file: i.file.clone(),
-                line: i.line,
-            });
-        }
-    }
-
-    report.findings.sort_by(|a, b| {
-        a.file.cmp(&b.file)
-            .then(a.line.cmp(&b.line))
-            .then(a.port.cmp(&b.port))
-    });
-
-    Ok(report)
-}
-
-// ── Internals ────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-struct ImplSite {
-    port: String,
-    adapter: String,
-    file: String,
-    line: usize,
-}
-
-#[derive(Debug)]
-struct TraitSite {
-    name: String,
-    file: String,
-    line: usize,
-}
-
-#[derive(Debug, Default)]
-struct WorkspaceScan {
-    impls: Vec<ImplSite>,
-    traits: Vec<TraitSite>,
-    /// Identifiers (struct/type names) referenced in composition-root files.
-    /// Used as the "is this adapter bound?" oracle — if its struct name
-    /// shows up in any composition file, we treat it as wired.
-    composition_idents: HashSet<String>,
-}
-
-fn scan_workspace(root: &Path) -> anyhow::Result<WorkspaceScan> {
-    let mut scan = WorkspaceScan::default();
-    let mut parser = Parser::new();
-    let lang: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-    parser
-        .set_language(&lang)
-        .map_err(|e| anyhow::anyhow!("set tree-sitter-rust language: {e}"))?;
-
-    let root_for_filter = root.to_path_buf();
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|e| e.path() == root_for_filter || !is_excluded_dir(e.path()))
-    {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|x| x.to_str()) != Some("rs") {
-            continue;
-        }
-        let Ok(source) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        let rel = path
-            .strip_prefix(root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .to_string();
-
-        let Some(tree) = parser.parse(&source, None) else {
-            continue;
-        };
-        collect_impl_and_trait(
-            tree.root_node(),
-            &source,
-            &rel,
-            &mut scan.impls,
-            &mut scan.traits,
-        );
-
-        if is_composition_root_file(&rel) {
-            collect_type_idents(tree.root_node(), &source, &mut scan.composition_idents);
-        }
-    }
-
-    Ok(scan)
-}
-
-fn is_excluded_dir(p: &Path) -> bool {
-    let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
-    if matches!(
-        name,
-        "target" | "node_modules" | ".git" | "dist" | "build"
-    ) {
-        return true;
-    }
-    if name.starts_with("hex-worktrees") {
-        return true;
-    }
-    // Drop hidden subdirectories (`.git`, `.cache`, etc.) but never the
-    // root entry — tempfile names temp dirs `.tmpXYZ` on Linux.
-    name.starts_with('.')
-}
-
-/// File-name heuristics for "this file wires adapters to ports".
-///
-/// We match anything whose path contains `composition` or `compose` (covers
-/// `composition-root.ts`, `composition_root.rs`, `hex-nexus/src/composition/`),
-/// plus the canonical entry points `main.rs` and `state.rs` which in our
-/// codebase often hold the construction.
-fn is_composition_root_file(rel_path: &str) -> bool {
-    let lower = rel_path.to_lowercase();
-    if lower.contains("composition") || lower.contains("compose") {
-        return true;
-    }
-    let basename = Path::new(rel_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
-    matches!(basename, "main.rs" | "state.rs" | "app.rs")
-}
-
-fn collect_impl_and_trait(
-    node: Node,
-    source: &str,
-    file_rel: &str,
-    impls: &mut Vec<ImplSite>,
-    traits: &mut Vec<TraitSite>,
-) {
-    match node.kind() {
-        "impl_item" => {
-            // Only `impl Trait for Type` blocks have a `trait` field.
-            // `impl Type { ... }` (inherent impls) do not.
-            if let (Some(trait_node), Some(type_node)) = (
-                node.child_by_field_name("trait"),
-                node.child_by_field_name("type"),
-            ) {
-                let port = last_path_segment(node_text(trait_node, source));
-                let adapter = last_path_segment(node_text(type_node, source));
-                if !port.is_empty() && !adapter.is_empty() {
-                    impls.push(ImplSite {
-                        port,
-                        adapter,
-                        file: file_rel.to_string(),
-                        line: node.start_position().row + 1,
-                    });
-                }
+            for e in f.exports.iter().filter(|e| e.kind == ExportKind::Type) {
+                report.findings.push(OrphanFinding {
+                    kind: "orphan_adapter".to_string(),
+                    port: ports_named[0].to_string(),
+                    adapter: Some(e.name.clone()),
+                    file: f.path.clone(),
+                    line: e.line,
+                });
             }
         }
-        "trait_item" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let name = node_text(name_node, source).to_string();
-                if !name.is_empty() {
-                    traits.push(TraitSite {
-                        name,
-                        file: file_rel.to_string(),
-                        line: node.start_position().row + 1,
-                    });
-                }
-            }
-        }
-        _ => {}
     }
 
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_impl_and_trait(child, source, file_rel, impls, traits);
-    }
-}
-
-/// Collect every `type_identifier` in the file (struct/enum/trait names
-/// at construction or use sites). Composition-root files reference adapter
-/// types by name when wiring; this is the cheapest reliable signal.
-fn collect_type_idents(node: Node, source: &str, out: &mut HashSet<String>) {
-    if node.kind() == "type_identifier" {
-        let text = node_text(node, source);
-        if !text.is_empty() {
-            out.insert(text.to_string());
-        }
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_type_idents(child, source, out);
-    }
-}
-
-fn node_text<'a>(node: Node, source: &'a str) -> &'a str {
-    node.utf8_text(source.as_bytes()).unwrap_or("")
-}
-
-/// `crate::ports::FooPort<T>` → `FooPort`. `FooPort` → `FooPort`.
-fn last_path_segment(s: &str) -> String {
-    let s = s.trim();
-    let before_lt = s.split('<').next().unwrap_or(s);
-    before_lt
-        .rsplit("::")
-        .next()
-        .unwrap_or(before_lt)
-        .trim()
-        .to_string()
-}
-
-// ── Convenience for binary callers ──────────────────────────────────
-
-/// Resolve `path` to an absolute root directory, defaulting to CWD.
-pub fn resolve_root(path: &str) -> PathBuf {
-    let p = Path::new(path);
-    p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
+    report.findings.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)).then(a.port.cmp(&b.port)));
+    report
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::ExportDeclaration;
+    use std::collections::HashMap;
 
-    #[test]
-    fn last_path_segment_strips_module_path_and_generics() {
-        assert_eq!(last_path_segment("FooPort"), "FooPort");
-        assert_eq!(last_path_segment("crate::ports::FooPort"), "FooPort");
-        assert_eq!(last_path_segment("FooPort<T>"), "FooPort");
-        assert_eq!(last_path_segment("crate::ports::FooPort<T, U>"), "FooPort");
+    fn file(path: &str, exports: &[(&str, ExportKind)], names: &[&str]) -> FileData {
+        FileData {
+            path: path.to_string(),
+            imports: vec![],
+            exports: exports
+                .iter()
+                .enumerate()
+                .map(|(i, (n, k))| ExportDeclaration {
+                    file: path.to_string(),
+                    name: n.to_string(),
+                    line: i + 1,
+                    hex_public: false,
+                    kind: *k,
+                })
+                .collect(),
+            references: names.iter().map(|n| (n.to_string(), 1)).collect::<HashMap<_, _>>(),
+            members: HashMap::new(),
+        }
     }
 
     #[test]
-    fn composition_root_heuristic_matches_known_paths() {
-        assert!(is_composition_root_file("src/composition_root.rs"));
-        assert!(is_composition_root_file("hex-nexus/src/composition/mod.rs"));
-        assert!(is_composition_root_file("src/main.rs"));
-        assert!(is_composition_root_file("hex-nexus/src/state.rs"));
-        assert!(!is_composition_root_file("src/adapters/foo.rs"));
-        assert!(!is_composition_root_file("src/ports/bar.rs"));
+    fn a_go_port_whose_method_set_an_adapter_exports_is_implemented() {
+        let mut port = file("internal/ports/store.go", &[("Store", ExportKind::Type)], &["Store"]);
+        port.members.insert("Store".to_string(), vec!["Load".to_string(), "Save".to_string()]);
+        let adapter = file(
+            "adapters/secondary/memory.go",
+            &[("MemoryStore", ExportKind::Type), ("Load", ExportKind::Method), ("Save", ExportKind::Method)],
+            &["MemoryStore", "Load", "Save", "ports", "Count"],
+        );
+        let root = file("composition-root.go", &[], &["MemoryStore"]);
+        let r = analyze_files(&[port, adapter, root], ALL);
+        assert!(r.findings.is_empty(), "{:?}", r.findings);
+    }
+
+    const ALL: OrphanOptions = OrphanOptions { orphan_adapters: true, orphan_ports: true };
+
+    #[test]
+    fn a_port_no_adapter_names_is_an_orphan_port() {
+        let files = vec![
+            file("src/ports/lonely.rs", &[("LonelyPort", ExportKind::Type)], &["LonelyPort"]),
+            file("src/ports/used.rs", &[("UsedPort", ExportKind::Type)], &["UsedPort"]),
+            file("src/adapters/used.rs", &[("UsedAdapter", ExportKind::Type)], &["UsedPort", "UsedAdapter"]),
+            file("src/lib.rs", &[], &["UsedAdapter"]),
+        ];
+        let r = analyze_files(&files, ALL);
+        assert_eq!(r.findings.len(), 1, "{:?}", r.findings);
+        assert_eq!((r.findings[0].kind.as_str(), r.findings[0].port.as_str()), ("orphan_port", "LonelyPort"));
+    }
+
+    #[test]
+    fn an_adapter_nothing_outside_adapters_names_is_an_orphan_adapter() {
+        let files = vec![
+            file("src/ports/foo.rs", &[("FooPort", ExportKind::Type)], &["FooPort"]),
+            file("src/adapters/foo.rs", &[("OrphanFoo", ExportKind::Type)], &["FooPort", "OrphanFoo"]),
+            file("src/composition_root.rs", &[], &["Vec"]),
+        ];
+        let r = analyze_files(&files, ALL);
+        assert_eq!(r.findings.len(), 1, "{:?}", r.findings);
+        assert_eq!(r.findings[0].adapter.as_deref(), Some("OrphanFoo"));
+        assert_eq!(r.findings[0].port, "FooPort");
+    }
+
+    #[test]
+    fn an_adapter_wired_through_its_constructor_is_not_an_orphan() {
+        // Go: composition calls secondary.NewMemoryStore(); the type is never named.
+        let files = vec![
+            file("internal/ports/store.go", &[("Store", ExportKind::Type)], &["Store"]),
+            file(
+                "adapters/secondary/memory.go",
+                &[("MemoryStore", ExportKind::Type), ("NewMemoryStore", ExportKind::Function)],
+                &["Store", "MemoryStore", "NewMemoryStore", "ports"],
+            ),
+            file("composition-root.go", &[], &["NewMemoryStore", "secondary"]),
+        ];
+        assert!(analyze_files(&files, ALL).findings.is_empty());
+    }
+
+    #[test]
+    fn a_type_in_adapters_that_names_no_port_is_not_an_adapter() {
+        let files = vec![
+            file("src/ports/p.rs", &[("Quux", ExportKind::Type)], &["Quux"]),
+            file("src/adapters/inherent.rs", &[("Lonely", ExportKind::Type)], &["Lonely", "Self"]),
+        ];
+        let r = analyze_files(&files, ALL);
+        assert_eq!(r.findings.len(), 1, "{:?}", r.findings);
+        assert_eq!(r.findings[0].kind, "orphan_port");
     }
 }

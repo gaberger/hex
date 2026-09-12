@@ -64,6 +64,20 @@ pub trait AstPort: Send + Sync {
         let _ = (path, source, lang);
         Ok(std::collections::HashMap::new())
     }
+
+    /// The method names each trait or interface in the file declares, by
+    /// trait name. A Go type implements an interface by having its methods
+    /// and never names it, so a detector that asks "does an adapter stand
+    /// behind this port" needs the member list, not the name.
+    fn extract_members(
+        &self,
+        path: &Path,
+        source: &str,
+        lang: Language,
+    ) -> Result<std::collections::HashMap<String, Vec<String>>, AnalysisError> {
+        let _ = (path, source, lang);
+        Ok(std::collections::HashMap::new())
+    }
 }
 
 // ── Architecture Analysis Port ───────────────────────────
