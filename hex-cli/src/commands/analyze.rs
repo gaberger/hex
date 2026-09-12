@@ -308,9 +308,16 @@ pub async fn run(
     if !violations_only && !quiet {
         println!();
         println!("  {}", "Architectural health:".bold());
-        for (label, count) in health_findings(&root) {
-            let icon = if count == 0 { "\u{2713}".green() } else { "\u{2022}".yellow() };
-            println!("    {} {:<18} {}", icon, label, count);
+        for (label, outcome) in health_findings(&root) {
+            match outcome {
+                Health::Count(0) => println!("    {} {:<18} 0", "\u{2713}".green(), label),
+                Health::Count(n) => println!("    {} {:<18} {}", "\u{2022}".yellow(), label, n),
+                // Not a pass. The detector did not look.
+                Health::NotApplicable(why) => {
+                    println!("    {} {:<18} n/a ({})", "\u{25cb}".dimmed(), label, why.dimmed())
+                }
+                Health::Failed(e) => println!("    {} {:<18} FAILED ({})", "\u{2717}".red(), label, e),
+            }
         }
     }
 
@@ -417,26 +424,48 @@ pub async fn run(
 /// report, and a wall of findings on every `hex analyze` trains people to
 /// ignore the whole section. A detector that errors reports 0 rather than
 /// failing the analysis — these are advisory.
-fn health_findings(root: &Path) -> Vec<(&'static str, usize)> {
+/// What a health detector said, kept distinct so the display cannot round a
+/// decline or a failure down to a green zero.
+enum Health {
+    Count(usize),
+    NotApplicable(String),
+    Failed(String),
+}
+
+fn health_findings(root: &Path) -> Vec<(&'static str, Health)> {
     use hex_analysis::analyzers::*;
+    fn count<T>(r: anyhow::Result<T>, len: impl Fn(&T) -> usize) -> Health {
+        match r {
+            Ok(v) => Health::Count(len(&v)),
+            Err(e) => Health::Failed(e.to_string()),
+        }
+    }
     vec![
-        ("cohesion", cohesion::analyze(root).map(|r| r.findings.len()).unwrap_or(0)),
-        ("duplication", duplication::analyze(root).map(|r| r.findings.len()).unwrap_or(0)),
+        ("cohesion", count(cohesion::analyze(root), |r| r.findings.len())),
+        ("duplication", count(duplication::analyze(root), |r| r.findings.len())),
         (
             "god types",
-            god_types::analyze(root, god_types::GodTypeThresholds::from_project_root(root))
-                .map(|r| r.findings.len())
-                .unwrap_or(0),
+            count(
+                god_types::analyze(root, god_types::GodTypeThresholds::from_project_root(root)),
+                |r| r.findings.len(),
+            ),
         ),
-        ("dead layers", dead_layer::analyze(root).map(|r| r.findings.len()).unwrap_or(0)),
+        (
+            "dead layers",
+            match dead_layer::analyze(root) {
+                Ok(r) => match r.not_applicable {
+                    Some(why) => Health::NotApplicable(why),
+                    None => Health::Count(r.findings.len()),
+                },
+                Err(e) => Health::Failed(e.to_string()),
+            },
+        ),
         (
             "orphans",
-            orphan::analyze(
-                root,
-                orphan::OrphanOptions { orphan_adapters: true, orphan_ports: true },
-            )
-            .map(|r| r.findings.len())
-            .unwrap_or(0),
+            count(
+                orphan::analyze(root, orphan::OrphanOptions { orphan_adapters: true, orphan_ports: true }),
+                |r| r.findings.len(),
+            ),
         ),
     ]
 }

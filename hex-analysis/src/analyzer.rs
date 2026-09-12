@@ -382,6 +382,24 @@ impl ArchAnalysisPort for ArchAnalyzer {
 /// 1. Collect interface/trait exports from ports/ files ending with "Port"
 /// 2. Check if any adapter/usecase imports that name explicitly
 /// 3. (Go/Rust) Structural matching: if adapter methods overlap with port methods
+/// Is this import target inside a ports layer? Matches a file under `ports/`
+/// and a Go package path that ends at `ports`.
+fn is_ports_path(p: &str) -> bool {
+    p.contains("/ports/") || p.ends_with("/ports") || p == "ports"
+}
+
+/// Two paths refer to the same module when they match after stripping the
+/// extension. Import resolution may carry `.js` (NodeNext), `.ts`, or nothing,
+/// and the declaring file carries `.ts`.
+fn same_module(a: &str, b: &str) -> bool {
+    fn stem(p: &str) -> &str {
+        let p = p.strip_suffix(".js").or_else(|| p.strip_suffix(".ts")).or_else(|| p.strip_suffix(".rs")).or_else(|| p.strip_suffix(".go")).unwrap_or(p);
+        p.strip_suffix("/index").or_else(|| p.strip_suffix("/mod")).unwrap_or(p)
+    }
+    let (sa, sb) = (stem(a), stem(b));
+    sa == sb || sa.ends_with(sb) || sb.ends_with(sa)
+}
+
 fn detect_unused_ports(file_data: &[FileData]) -> Vec<String> {
     // Step 1: Collect port interface names
     let mut port_interfaces: HashSet<String> = HashSet::new();
@@ -414,7 +432,39 @@ fn detect_unused_ports(file_data: &[FileData]) -> Vec<String> {
         }
     }
 
-    // Step 2: Check explicit imports of port names by adapters/usecases
+    // Which port interfaces does each ports/ file export? Needed below so an
+    // import of the *file* can mark its ports as used.
+    let mut ports_by_file: HashMap<String, Vec<String>> = HashMap::new();
+    for file in file_data {
+        if !file.path.contains("/ports/") {
+            continue;
+        }
+        let names: Vec<String> = file
+            .exports
+            .iter()
+            .filter(|e| e.name.ends_with("Port"))
+            .map(|e| e.name.clone())
+            .collect();
+        if !names.is_empty() {
+            ports_by_file.insert(file.path.clone(), names);
+        }
+    }
+
+    // Step 2: Check imports by adapters/usecases.
+    //
+    // A port is used if an adapter or use case imports its interface by name,
+    // OR imports anything at all from the file that declares it. The second
+    // clause is the fix for TypeScript, where the idiomatic port is
+    //
+    //     export interface GraphInsightPort { ... }
+    //     export const graphInsightPort: GraphInsightPort = Object.freeze({ ... });
+    //
+    // and a component imports the value `graphInsightPort`, never the type.
+    // The name check alone reported four correct ports as unused on a real
+    // project and cost the refactor that created them four points of grade.
+    // Importing from the port's module is what "using the port" looks like in
+    // all three languages: Go imports the package, Rust `use`s the module,
+    // TypeScript imports from the file.
     let mut implemented_ports: HashSet<String> = HashSet::new();
     for file in file_data {
         let is_adapter = file.path.contains("/adapters/");
@@ -427,10 +477,26 @@ fn detect_unused_ports(file_data: &[FileData]) -> Vec<String> {
                 if port_interfaces.contains(name) {
                     implemented_ports.insert(name.clone());
                 }
-                // Wildcard import from ports/ means all ports are used
-                if name == "*" && imp.resolved_path.contains("/ports/") {
+                // Wildcard import from ports/ means all ports are used. A Go
+                // package path ends at `/ports` with no trailing slash, which
+                // the old `contains("/ports/")` check missed, so every Go port
+                // read as unused.
+                if name == "*" && is_ports_path(&imp.resolved_path) {
                     for p in &port_interfaces {
                         implemented_ports.insert(p.clone());
+                    }
+                }
+            }
+            // Any import from a ports/ file marks that file's ports as used.
+            if is_ports_path(&imp.resolved_path) {
+                for (port_file, names) in &ports_by_file {
+                    if imp.resolved_path.ends_with(port_file)
+                        || port_file.ends_with(&imp.resolved_path)
+                        || same_module(&imp.resolved_path, port_file)
+                    {
+                        for n in names {
+                            implemented_ports.insert(n.clone());
+                        }
                     }
                 }
             }

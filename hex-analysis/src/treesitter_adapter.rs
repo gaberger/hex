@@ -248,7 +248,6 @@ fn extract_go_imports(
 ) -> Result<Vec<ImportStatement>, AnalysisError> {
     let mut imports = Vec::new();
     let mut cursor = root.walk();
-
     for child in root.children(&mut cursor) {
         if child.kind() == "import_declaration" {
             // Single import: import "fmt"
@@ -257,7 +256,59 @@ fn extract_go_imports(
         }
     }
 
+    // A Go import names a package, not a symbol, so the import line alone
+    // cannot say which port an adapter uses. The symbols are in the body, as
+    // `ports.CounterPort` (a qualified_type) or `ports.New()` (a
+    // selector_expression). Collect them by package identifier and attach
+    // them to the import they qualify. An import with no qualified use in
+    // the file keeps `["*"]`, which is what it was before and is still the
+    // right reading of a side-effect import.
+    //
+    // Without this, every port in an imported package read as used, and a
+    // port nothing referenced could not be reported. Found by the Go case of
+    // the per-language unused_ports fixture (ADR-2609120600).
+    let mut uses: std::collections::HashMap<String, std::collections::BTreeSet<String>> =
+        std::collections::HashMap::new();
+    collect_go_qualified_uses(root, source, &mut uses);
+    for imp in &mut imports {
+        let alias = go_import_alias(&imp.raw_path);
+        if let Some(names) = uses.get(&alias) {
+            if !names.is_empty() {
+                imp.names = names.iter().cloned().collect();
+            }
+        }
+    }
     Ok(imports)
+}
+
+/// The identifier a Go file uses to refer to an imported package: the last
+/// path segment.
+fn go_import_alias(raw_path: &str) -> String {
+    raw_path.rsplit('/').next().unwrap_or(raw_path).to_string()
+}
+
+/// Every `pkg.Name` in the file, grouped by `pkg`.
+fn collect_go_qualified_uses(
+    node: &tree_sitter::Node,
+    source: &str,
+    uses: &mut std::collections::HashMap<String, std::collections::BTreeSet<String>>,
+) {
+    let kind = node.kind();
+    if (kind == "qualified_type" || kind == "selector_expression") && node.child_count() == 3 {
+        let left = node.child(0).unwrap();
+        let right = node.child(2).unwrap();
+        let left_ok = matches!(left.kind(), "package_identifier" | "identifier");
+        let right_ok = matches!(right.kind(), "type_identifier" | "field_identifier" | "identifier");
+        if left_ok && right_ok {
+            uses.entry(node_text(left, source).to_string())
+                .or_default()
+                .insert(node_text(right, source).to_string());
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_go_qualified_uses(&child, source, uses);
+    }
 }
 
 fn collect_go_import_specs(

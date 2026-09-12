@@ -76,16 +76,40 @@ pub struct DeadLayerFinding {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct DeadLayerReport {
     pub findings: Vec<DeadLayerFinding>,
+    /// Set when the detector could not evaluate the tree at all. A reader must
+    /// not confuse "zero findings" with "did not look".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_applicable: Option<String>,
 }
 
 /// Run the dead-layer detector over `root`.
 ///
 /// Findings are sorted by `(layer, layer_kind)` so the improver's
 /// hypothesis IDs and integration-test assertions stay deterministic.
+fn tree_has_rust(root: &Path) -> bool {
+    WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| e.path() == root || !is_excluded_dir(e.path()))
+        .flatten()
+        .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("rs"))
+}
+
 pub fn analyze(root: &Path) -> anyhow::Result<DeadLayerReport> {
     let layers = discover_layers(root);
     if layers.is_empty() {
         return Ok(DeadLayerReport::default());
+    }
+
+    // This detector parses with the Rust grammar and reads only `.rs` files.
+    // On a Go or TypeScript tree it sees no inbound edge anywhere and flags
+    // every layer as dead. That count was displayed next to the grade on a
+    // real TypeScript project, ten layers, and read as part of the verdict.
+    //
+    // Until it is rebuilt on the shared per-language file model
+    // (ADR-2609120600, step 3), it declines to report on a tree with no Rust
+    // in it. Declining is honest. Reporting ten dead layers is not.
+    if !tree_has_rust(root) {
+        return Ok(DeadLayerReport { not_applicable: Some("no .rs files; detector is Rust-only".to_string()), ..Default::default() });
     }
 
     let mut parser = Parser::new();
@@ -152,7 +176,7 @@ pub fn analyze(root: &Path) -> anyhow::Result<DeadLayerReport> {
     }
 
     findings.sort_by(|a, b| a.layer.cmp(&b.layer).then(a.layer_kind.cmp(&b.layer_kind)));
-    Ok(DeadLayerReport { findings })
+    Ok(DeadLayerReport { findings, not_applicable: None })
 }
 
 // ── Internals ────────────────────────────────────────────────────────

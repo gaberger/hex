@@ -83,7 +83,7 @@ section originally described against the wrong detector.
 170-point violation penalty. The refactor reduced them by three. They are
 pre-existing debt the grade now shows because nothing larger hides it.
 
-Without the false positive the score is 82, a B. Not A, because of debt outside
+With that detector fixed, the score is 82, a B. Not A, because of debt outside
 the target. The task did not ask for that and the gate did not demand it.
 
 **The dead-layers count of 10 is unrelated to the score.** That detector reads
@@ -137,11 +137,14 @@ measure.
 
 ## Recorded, not fixed
 
-- The `unused_ports` detector matches port interfaces by name and does not
-  follow a value export to its type. It penalised the four correct TypeScript
-  ports the refactor created.
-- The `dead layers` detector is Rust-only. It flags every layer on a
-  TypeScript or Go project and its count is displayed as if it meant something.
+- **Fixed since.** `unused_ports` now treats an import from a port's module
+  as use of its ports, which is what use looks like in TypeScript, and the Go
+  extractor now records the qualified names a file actually references, so a
+  Go port nothing names is reportable. Six fixtures, two per language. The
+  `brain` clone re-analysed: 0 unused ports, score 82, B. ADR-2609120600.
+- **Guarded, not fixed.** `dead layers` is Rust-only. It now declines on a
+  tree with no `.rs` files and the display says `n/a` with the reason, instead
+  of a count. The rebuild on the shared file model is ADR-2609120600 step 3.
 - The analyzer does not see `domain/` importing from a non-layer directory
   such as `api/`. Second sighting.
 - `hex build --gate` accepted a gate weaker than the trial's measure, and
