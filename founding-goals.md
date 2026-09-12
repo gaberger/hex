@@ -13,13 +13,6 @@ A goal is retired only by a human commit that removes it from this file *and* la
 **Test:** Layer 6 surveys the previous quarter's `IModelProvider` swap tickets. The goal is served if (a) at least one swap promoted in the quarter, (b) zero non-test files outside `hex-core/src/ports/inference.rs` and the registered adapters mention a specific provider name, and (c) every consumer call site uses the port trait alone.
 **Retirement:** Only by a human commit removing this goal, with a linked Retirement-ADR.
 
-## G2 — Multi-host scaleout
-
-**Stated:** 2026-04-26 by gary (garyberger@forwardnetworks.com)
-**Why:** A self-modifying substrate that runs only on the developer's laptop is a toy. The substrate must be able to run as a fleet — agents on one host, inference on another, coordination state shared — with placement decided by the substrate (informed by telemetry from C3) rather than configured by the user. Without this, hex remains a single-tenant build helper instead of an operating system for AI work.
-**Test:** Layer 6 confirms that, by the next quarterly review, at least one composition swap was decided by placement policy reading `PortTelemetry` rather than by static configuration; and that no `IModelProvider` or `ICoordinationPort` adapter encodes its own host topology.
-**Retirement:** Only by a human commit removing this goal, with a linked Retirement-ADR.
-
 ## G3 — Hexagonal rigor at the workspace level
 
 **Stated:** 2026-04-26 by gary (garyberger@forwardnetworks.com)
